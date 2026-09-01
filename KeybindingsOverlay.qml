@@ -48,7 +48,7 @@ Rectangle {
     { category: "Browse All", keys: "J/K or ↑/↓", action: "Move the selection cursor" },
     { category: "Browse All", keys: "/", action: "Fuzzy-search the selected Movies or Shows scope" },
     { category: "Browse All", keys: "M/S", action: "Browse movies or shows" },
-    { category: "Browse All", keys: ", / .", action: "Back (collapse folder or previous page) or forward (open folder or next page)" },
+    { category: "Browse All", keys: "← / →", action: "Back (collapse folder or previous page) or forward (open folder or next page)" },
     { category: "Browse All", keys: "Esc", action: "Collapse a folder, then close Browse All" }
   ]
   readonly property var filteredBindings: filterBindings()

@@ -181,11 +181,14 @@ function flattenAccordion(items, childrenByParent, expandedShowKey, expandedSeas
   var seasonKey = String(expandedSeasonKey || "")
   for (var i = 0; i < list.length; i++) {
     var item = copyRow(list[i], 0)
+    if (item.playable === false && item.kind === "show")
+      item.expanded = String(item.ratingKey || "") === showKey
     rows.push(item)
     if (item.playable !== false || String(item.ratingKey || "") !== showKey) continue
     var seasons = Array.isArray(map[item.ratingKey]) ? map[item.ratingKey] : []
     for (var s = 0; s < seasons.length; s++) {
       var season = copyRow(seasons[s], 1)
+      season.expanded = String(season.ratingKey || "") === seasonKey
       rows.push(season)
       if (String(season.ratingKey || "") !== seasonKey) continue
       var episodes = Array.isArray(map[season.ratingKey]) ? map[season.ratingKey] : []
@@ -196,10 +199,12 @@ function flattenAccordion(items, childrenByParent, expandedShowKey, expandedSeas
   return rows
 }
 
-function itemIcon(kind) {
-  if (kind === "movie") return "󰿎"
-  if (kind === "season") return "󰉖"
-  return "󰔇"
+function itemIcon(item) {
+  if (!item) return ""
+  if (item.playable === false && (item.kind === "show" || item.kind === "season"))
+    return item.expanded ? "󰅀" : "󰅂"
+  if (item.kind === "movie") return "󰿎"
+  return "󰐊"
 }
 
 function sourceLabel(sourceState, updating) {

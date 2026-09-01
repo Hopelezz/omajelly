@@ -16,13 +16,11 @@ Rectangle {
   property string fontFamily: Style.font.family
   property Component iconComponent
   property bool showNewItemCount: true
-  property bool useJellyfinBlueForNewItems: true
   property bool autoPlayNextEpisode: false
   property string subtitleSearchLanguage: "en"
 
   signal dismissRequested()
   signal showNewItemCountRequested(bool value)
-  signal useJellyfinBlueForNewItemsRequested(bool value)
   signal autoPlayNextEpisodeRequested(bool value)
   signal subtitleSearchLanguageRequested(string value)
 
@@ -32,7 +30,7 @@ Rectangle {
     || passwordField.activeFocus || tokenField.activeFocus
     || saveSettingsButton.activeFocus || closeSettingsButton.activeFocus
     || clearSettingsButton.activeFocus || newItemCountToggle.activeFocus
-    || jellyfinBlueToggle.activeFocus || autoPlayNextToggle.activeFocus
+    || autoPlayNextToggle.activeFocus
     || subtitleLanguageField.activeFocus || advancedButton.activeFocus
     || quickConnectButton.activeFocus || cancelQuickConnectButton.activeFocus
   readonly property real contentImplicitHeight: settingsColumn.implicitHeight
@@ -485,18 +483,6 @@ Rectangle {
           foreground: root.foreground
           fontFamily: root.fontFamily
           onClicked: root.showNewItemCountRequested(!root.showNewItemCount)
-          Keys.onEscapePressed: root.close()
-        }
-
-        Toggle {
-          id: jellyfinBlueToggle
-          width: parent.width
-          label: "Override theme colors"
-          description: "Tint the bar icon Jellyfin blue when new items are available. Off keeps the current theme color."
-          checked: root.useJellyfinBlueForNewItems
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          onClicked: root.useJellyfinBlueForNewItemsRequested(!root.useJellyfinBlueForNewItems)
           Keys.onEscapePressed: root.close()
         }
 

@@ -41,7 +41,7 @@ Open the Jellyfin widget after installation. On first launch it opens Connection
 
 The Quick Connect secret, password, and API key stay in the helper and the desktop secret service. They never land in QML, `shell.json`, cache, logs, URLs, or process arguments. When editing a working password or API key connection, leave those fields blank to keep the saved token.
 
-Connection settings stores four preferences with the widget entry in `~/.config/omarchy/shell.json`. **Auto-play next episode** is disabled by default. **Subtitle search language** is a two-letter code and defaults to `en`. **Show new-item count** is on by default and controls the number beside the bar icon. **Override theme colors** is off by default; when it is on, new items tint the bar icon Jellyfin blue (`#00A4DC`) instead of the current theme.
+Connection settings stores three preferences with the widget entry in `~/.config/omarchy/shell.json`. **Auto-play next episode** is disabled by default. **Subtitle search language** is a two-letter code and defaults to `en`. **Show new-item count** is on by default and controls the number beside the bar icon.
 
 The server origin, user id, client identifier, and discovered library IDs go to `~/.config/omajelly/config.json`; the last windowed player rectangle goes to `player-window.json` in the same private directory. Removing credentials from Connection settings requires a confirmation click and clears saved authentication material and cached lists while retaining the player geometry preference.
 
@@ -89,7 +89,7 @@ The panel reads `~/.cache/omajelly/recent.json` before it contacts Jellyfin. A f
 
 `U` asks Jellyfin to refresh the library (`POST /Library/Refresh`). The UI reports that the scan was **accepted**, never that it has finished. After that, the plugin refreshes displayed data twice while the scan settles. Ordinary `R` remains a lightweight data refresh.
 
-In Browse All, select Movies or Shows first, then `/` fuzzy-searches only that scope. J/K move the same selection cursor as the compact panel. M/S switch the unfiltered scope. `,` goes back (collapse a folder, then the previous page, then close). `.` opens the selected folder or goes to the next page. Escape matches back. Season syntax applies to Show searches: a query such as `Alone S01` expands matching shows into Season 1 episode results; `S01E03` can select one episode directly.
+In Browse All, select Movies or Shows first, then `/` fuzzy-searches only that scope. J/K or ↑/↓ move the same selection cursor as the compact panel. M/S switch the unfiltered scope. ← goes back (collapse a folder, then the previous page, then close). → opens the selected folder or goes to the next page. Escape matches back. Season syntax applies to Show searches: a query such as `Alone S01` expands matching shows into Season 1 episode results; `S01E03` can select one episode directly.
 
 ## Playback boundary
 

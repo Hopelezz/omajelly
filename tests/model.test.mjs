@@ -196,4 +196,10 @@ test("keeps show folders and flattens accordion children in place", () => {
   assert.equal(rows[1].depth, 1);
   assert.equal(rows[2].depth, 2);
   assert.equal(rows[2].playable, true);
+  assert.equal(rows[0].expanded, true);
+  assert.equal(rows[1].expanded, true);
+  assert.equal(model.itemIcon(rows[0]), "󰅀");
+  assert.equal(model.itemIcon({ ...folders[0], expanded: false }), "󰅂");
+  assert.equal(model.itemIcon(rows[2]), "󰐊");
+  assert.equal(model.itemIcon({ kind: "movie", playable: true }), "󰿎");
 });

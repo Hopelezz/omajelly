@@ -335,6 +335,8 @@ Item {
       Keys.onEscapePressed: root.goBack()
       Keys.onUpPressed: root.moveSelection(-1)
       Keys.onDownPressed: root.moveSelection(1)
+      Keys.onLeftPressed: root.goBack()
+      Keys.onRightPressed: root.goForward()
       Keys.onReturnPressed: if (root.displayItems.length > 0) root.activate(root.displayItems[root.selectedIndex])
       Keys.onEnterPressed: if (root.displayItems.length > 0) root.activate(root.displayItems[root.selectedIndex])
       Keys.onPressed: function(event) {
@@ -343,12 +345,6 @@ Item {
           root.moveSelection(1); event.accepted = true
         } else if (event.key === Qt.Key_K || text === "k" || text === "K") {
           root.moveSelection(-1); event.accepted = true
-        } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_Less
-                   || text === "," || text === "<") {
-          root.goBack(); event.accepted = true
-        } else if (event.key === Qt.Key_Period || event.key === Qt.Key_Greater
-                   || text === "." || text === ">") {
-          root.goForward(); event.accepted = true
         } else if (text === "/") { searchField.forceActiveFocus(); event.accepted = true }
         else if (text === "m" || text === "M") { root.setKind("movies"); event.accepted = true }
         else if (text === "s" || text === "S") { root.setKind("shows"); event.accepted = true }
@@ -412,7 +408,7 @@ Item {
               id: closeButton
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: root.expandedShowKey !== "" ? "Back  Esc , " : "Close  Esc"
+              text: root.expandedShowKey !== "" ? "Back  Esc / ←" : "Close  Esc"
               foreground: root.onScrim
               fontFamily: Style.font.family
               bordered: true
@@ -549,7 +545,7 @@ Item {
                   anchors.left: parent.left
                   anchors.leftMargin: Style.space(10) + (mediaRow.modelData.depth || 0) * Style.space(18)
                   anchors.verticalCenter: parent.verticalCenter
-                  text: Model.itemIcon(mediaRow.modelData.kind)
+                  text: Model.itemIcon(mediaRow.modelData)
                   textFormat: Text.PlainText
                   color: Color.accent
                   font.family: Style.font.family
@@ -613,7 +609,7 @@ Item {
             Text {
               id: browserKeys
               width: parent.width
-              text: "J/K move · ↵ open · , back · . forward · M/S · / search · Esc close"
+              text: "↑/↓ move · ↵ open · ← back · → forward · M/S · / search · Esc close"
               textFormat: Text.PlainText
               color: root.onScrimDim
               font.family: Style.font.family
@@ -646,7 +642,7 @@ Item {
                 spacing: Style.space(6)
 
                 Button {
-                  text: "Previous  ,"
+                  text: "Previous  ←"
                   foreground: root.onScrim
                   fontFamily: Style.font.family
                   bordered: true
@@ -655,7 +651,7 @@ Item {
                 }
 
                 Button {
-                  text: "Next  ."
+                  text: "Next  →"
                   foreground: root.onScrim
                   fontFamily: Style.font.family
                   bordered: true

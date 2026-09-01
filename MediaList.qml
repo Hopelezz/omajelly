@@ -56,7 +56,7 @@ ListView {
       anchors.left: parent.left
       anchors.leftMargin: Style.space(10) + (mediaRow.modelData.depth || 0) * Style.space(16)
       anchors.verticalCenter: parent.verticalCenter
-      text: Model.itemIcon(mediaRow.modelData.kind)
+      text: Model.itemIcon(mediaRow.modelData)
       textFormat: Text.PlainText
       color: mediaRow.modelData.isNew ? Color.accent : root.dimForeground
       font.family: root.fontFamily

@@ -51,8 +51,6 @@ Panel {
     ? "RECENT MOVIES" : (activeView === "series" ? "RECENT SHOWS"
       : (activeView === "recent" ? "RECENTLY ADDED" : "CONTINUE WATCHING"))
   readonly property bool showNewItemCount: setting("showNewItemCount", true) !== false
-  readonly property bool useJellyfinBlueForNewItems:
-    setting("useJellyfinBlueForNewItems", false) === true
   readonly property bool autoPlayNextEpisode:
     setting("autoPlayNextEpisode", false) === true
   readonly property string subtitleSearchLanguage: {
@@ -179,10 +177,6 @@ Panel {
 
   function setShowNewItemCount(value) {
     root.persistSettings({ showNewItemCount: value === true })
-  }
-
-  function setUseJellyfinBlueForNewItems(value) {
-    root.persistSettings({ useJellyfinBlueForNewItems: value === true })
   }
 
   function setAutoPlayNextEpisode(value) {
@@ -326,9 +320,14 @@ Panel {
 
   Component {
     id: jellyfinIcon
-    JellyfinIcon {
-      iconSize: Style.font.display
-      color: Color.accent
+    Text {
+      text: "󰟈"
+      textFormat: Text.PlainText
+      color: root.contentForeground
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.display
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
     }
   }
 
@@ -816,13 +815,9 @@ Panel {
         fontFamily: root.contentFontFamily
         iconComponent: jellyfinIcon
         showNewItemCount: root.showNewItemCount
-        useJellyfinBlueForNewItems: root.useJellyfinBlueForNewItems
         autoPlayNextEpisode: root.autoPlayNextEpisode
         subtitleSearchLanguage: root.subtitleSearchLanguage
         onShowNewItemCountRequested: function(value) { root.setShowNewItemCount(value) }
-        onUseJellyfinBlueForNewItemsRequested: function(value) {
-          root.setUseJellyfinBlueForNewItems(value)
-        }
         onAutoPlayNextEpisodeRequested: function(value) {
           root.setAutoPlayNextEpisode(value)
         }
