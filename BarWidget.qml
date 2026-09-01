@@ -54,7 +54,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.showBadge
-      ? String(JellyCore.JellyfinState.newCount) + " " + root.jellyfinGlyph
+      ? root.jellyfinGlyph + " " + String(JellyCore.JellyfinState.newCount)
       : root.jellyfinGlyph
     slotSize: Style.bar.iconSlot * (root.showBadge ? 2 : 1)
     tooltipText: JellyCore.JellyfinState.tooltipText
