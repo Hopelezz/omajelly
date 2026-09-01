@@ -478,7 +478,7 @@ Rectangle {
           id: newItemCountToggle
           width: parent.width
           label: "Show new-item count"
-          description: "Display the number beside the Jellyfin icon in the bar."
+          description: "Display the number to the right of the Jellyfin icon in the bar."
           checked: root.showNewItemCount
           foreground: root.foreground
           fontFamily: root.fontFamily

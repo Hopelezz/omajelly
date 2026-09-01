@@ -6,7 +6,7 @@ Click a row to stream it through `mpv`. Choose Windowed for a floating, movable 
 
 Connection settings has an **Auto-play next episode** toggle. It is off by default. When it is on, episode playback continues with the next episode in the series after the current episode ends. Closing the player stops the queue. Movie playback remains single-item.
 
-Browse All opens a separate fullscreen Omarchy panel. It searches and pages through the complete movie or show library. Shows stay in the list as folders: opening a show expands its seasons in place, then a season expands its episodes. Only one show and one season are open at a time.
+Browse All opens a separate fullscreen Omarchy panel. It searches and pages through the complete movie or show library. Shows stay in the list as folders: a closed show or season uses a right chevron, an open one uses a down chevron. Opening a show expands its seasons in place, then a season expands its episodes. Only one show and one season are open at a time.
 
 `mpv` keeps its built-in on-screen controller and default keyboard bindings. Use Space for pause, the arrow keys to seek, `#` to choose an audio track, `J` to choose a subtitle track, and `F` to toggle fullscreen. Press `Ctrl+J` to search Jellyfin's remote subtitle results in an mpv menu.
 
@@ -21,7 +21,7 @@ Browse All opens a separate fullscreen Omarchy panel. It searches and pages thro
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/hopelezz/omajelly.git --enable
+omarchy plugin add https://github.com/Hopelezz/omajelly.git --enable
 ```
 
 That clones the repository into `~/.config/omarchy/plugins/io.github.hopelezz.omajelly` and enables it on the bar. Saved user plugin files and `shell.json` changes reload automatically. A manual rescan is also available:
@@ -41,7 +41,7 @@ Open the Jellyfin widget after installation. On first launch it opens Connection
 
 The Quick Connect secret, password, and API key stay in the helper and the desktop secret service. They never land in QML, `shell.json`, cache, logs, URLs, or process arguments. When editing a working password or API key connection, leave those fields blank to keep the saved token.
 
-Connection settings stores three preferences with the widget entry in `~/.config/omarchy/shell.json`. **Auto-play next episode** is disabled by default. **Subtitle search language** is a two-letter code and defaults to `en`. **Show new-item count** is on by default and controls the number beside the bar icon.
+Connection settings stores three preferences with the widget entry in `~/.config/omarchy/shell.json`. **Auto-play next episode** is disabled by default. **Subtitle search language** is a two-letter code and defaults to `en`. **Show new-item count** is on by default and shows that number to the right of the bar icon.
 
 The server origin, user id, client identifier, and discovered library IDs go to `~/.config/omajelly/config.json`; the last windowed player rectangle goes to `player-window.json` in the same private directory. Removing credentials from Connection settings requires a confirmation click and clears saved authentication material and cached lists while retaining the player geometry preference.
 
@@ -65,9 +65,10 @@ chmod 600 /path/to/project/.env
 - Middle click: refresh
 - Right click: open Connection settings
 - Up/Down or J/K: move the selection cursor
-- Enter or click: play the selected item, or expand a show/season folder
+- Enter, Space, or click: play the selected item, or expand a show/season folder
 - X or click the watch-state badge: toggle the selected item between watched and unwatched
-- , / . : move between Continue, Added, Movies, and Shows (H/L remain available to Omarchy for switching panels)
+- , / . or [ / ]: move between Continue, Added, Movies, and Shows
+- H/L or ←/→: switch Omarchy bar panels
 - /: search the rows in the current compact view
 - T or the panel button: show or hide watched items
 - C: Continue Watching
@@ -79,17 +80,18 @@ chmod 600 /path/to/project/.env
 - Footer settings button or right-click the bar icon: open Connection settings
 - W: select Windowed playback
 - F: select Fullscreen playback
+- The external-link button: bring a windowed player to this workspace
 - O: open the selected item in Jellyfin Web
 - P or the Jellyfin glyph beside the live-status badge: open Jellyfin Web
 - R: refresh the displayed Jellyfin data
 - U or Scan all: discover libraries and request a library scan
-- Escape: close the panel
+- Escape: collapse an open season or show, then close the panel
 
 The panel reads `~/.cache/omajelly/recent.json` before it contacts Jellyfin. A failed refresh keeps the last successful list and labels it offline.
 
-`U` asks Jellyfin to refresh the library (`POST /Library/Refresh`). The UI reports that the scan was **accepted**, never that it has finished. After that, the plugin refreshes displayed data twice while the scan settles. Ordinary `R` remains a lightweight data refresh.
+Every 15 minutes, the plugin rediscovers movie and show libraries and asks Jellyfin to refresh them (`POST /Library/Refresh`). The UI reports that the scan was **accepted**, never that it has finished. After that, the plugin refreshes displayed data twice while the scan settles. `U` triggers the same process immediately; ordinary `R` remains a lightweight data refresh.
 
-In Browse All, select Movies or Shows first, then `/` fuzzy-searches only that scope. J/K or ↑/↓ move the same selection cursor as the compact panel. M/S switch the unfiltered scope. ← goes back (collapse a folder, then the previous page, then close). → opens the selected folder or goes to the next page. Escape matches back. Season syntax applies to Show searches: a query such as `Alone S01` expands matching shows into Season 1 episode results; `S01E03` can select one episode directly.
+In Browse All, select Movies or Shows first, then `/` fuzzy-searches only that scope. J/K or ↑/↓ move the same selection cursor as the compact panel. M/S switch the unfiltered scope. ← goes back (collapse a folder, then the previous page, then close). → opens the selected folder or goes to the next page. N/P change pages without opening a folder. Escape matches back. Season syntax applies to Show searches: a query such as `Alone S01` expands matching shows into Season 1 episode results; `S01E03` can select one episode directly.
 
 ## Playback boundary
 
@@ -126,4 +128,6 @@ rm -rf ~/.config/omajelly ~/.cache/omajelly
 
 The plugin installs no service, privileged file, or Hyprland rule.
 
-Omajelly reuses the QML layout and helper structure of Omaplex by Pieter Geutjens (MIT).
+## License
+
+Omajelly is MIT. See `LICENSE`. It reuses the QML layout and helper structure of Omaplex by Pieter Geutjens (MIT). Required tools are `secret-tool`, `mpv`, and `xdg-open`; `fzf` is optional.

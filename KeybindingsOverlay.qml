@@ -17,8 +17,9 @@ Rectangle {
   readonly property bool inputFocused: helpSearch.activeFocus
   readonly property var bindings: [
     { category: "Views & navigation", keys: "↑/↓ or J/K", action: "Move the selection cursor" },
-    { category: "Views & navigation", keys: "Enter", action: "Play the selected item, or open a show folder" },
-    { category: "Views & navigation", keys: ", / .", action: "Cycle Continue Watching, Added, Movies, and Shows" },
+    { category: "Views & navigation", keys: "Enter or Space", action: "Play the selected item, or open a show folder" },
+    { category: "Views & navigation", keys: ", / . or [ / ]", action: "Cycle Continue Watching, Added, Movies, and Shows" },
+    { category: "Views & navigation", keys: "H/L or ←/→", action: "Switch Omarchy bar panels" },
     { category: "Views & navigation", keys: "T", action: "Show or hide watched items" },
     { category: "Views & navigation", keys: "C", action: "Show Continue Watching" },
     { category: "Views & navigation", keys: "A", action: "Show all recently added media" },
@@ -34,7 +35,7 @@ Rectangle {
     { category: "Panel actions", keys: "X", action: "Toggle selected item watched or unwatched" },
     { category: "Panel actions", keys: "R", action: "Refresh Jellyfin activity and recently added media" },
     { category: "Panel actions", keys: "U", action: "Discover and scan all movie and show libraries" },
-    { category: "Panel actions", keys: "Esc", action: "Close help or the panel" },
+    { category: "Panel actions", keys: "Esc", action: "Collapse a folder, then close help or the panel" },
     { category: "Playback", keys: "Mouse", action: "Show mpv playback controls" },
     { category: "Playback", keys: "Space", action: "Pause or resume" },
     { category: "Playback", keys: "←/→", action: "Seek backward or forward" },
@@ -49,6 +50,7 @@ Rectangle {
     { category: "Browse All", keys: "/", action: "Fuzzy-search the selected Movies or Shows scope" },
     { category: "Browse All", keys: "M/S", action: "Browse movies or shows" },
     { category: "Browse All", keys: "← / →", action: "Back (collapse folder or previous page) or forward (open folder or next page)" },
+    { category: "Browse All", keys: "N/P", action: "Next or previous page" },
     { category: "Browse All", keys: "Esc", action: "Collapse a folder, then close Browse All" }
   ]
   readonly property var filteredBindings: filterBindings()
