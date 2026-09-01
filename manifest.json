@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hopelezz.omajelly",
+  "name": "Jellyfin",
+  "version": "0.1.0",
+  "author": "hopelezz",
+  "license": "MIT",
+  "description": "Jellyfin activity lists, fullscreen library browsing, and mpv playback.",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "keepLoaded": false,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "panel": "Browser.qml"
+  },
+  "barWidget": {
+    "displayName": "Jellyfin",
+    "description": "Continue watching, recently added media, and library browsing",
+    "category": "Media",
+    "aliases": [
+      "jellyfin",
+      "movies",
+      "television"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
