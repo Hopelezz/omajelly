@@ -113,22 +113,6 @@ def graphical_env() -> dict[str, str]:
     return environment
 
 
-def _transient_user_command(command: list[str]) -> list[str]:
-    try:
-        runner = resolve_tool("systemd-run")
-    except ConfigurationError:
-        return command
-    return [
-        runner,
-        "--user",
-        "--collect",
-        "--quiet",
-        "--no-block",
-        "--",
-        *command,
-    ]
-
-
 def _desktop_uses_app_window(path: str) -> bool:
     return WEBAPP_LAUNCHER in _desktop_payload(Path(path))
 
@@ -173,26 +157,20 @@ def launch_webapp(url: str, extra: list[str] | None = None) -> None:
         command.extend(extra)
     _refuse_if_secret(command)
     try:
-        launch_detached(_transient_user_command(command), env=graphical_env())
+        launch_detached(command, env=graphical_env())
     except FileNotFoundError as error:
         raise ConfigurationError("omarchy-launch-webapp is unavailable") from error
 
 
 def launch_jellyfin_webapp(url: str, extra: list[str] | None = None) -> None:
     install_jellyfin_webapp()
-    command = [resolve_tool("chromium"), "--app=" + url]
     arguments = list(_JELLYFIN_BROWSER_FLAGS)
     if extra:
         arguments.extend(value for value in extra if value not in arguments)
     extension = prepare_autoplay_extension(url)
     if extension is not None:
         arguments.append("--load-extension=" + str(extension))
-    command.extend(arguments)
-    _refuse_if_secret(command)
-    try:
-        launch_detached(_transient_user_command(command), env=graphical_env())
-    except FileNotFoundError as error:
-        raise ConfigurationError("chromium is unavailable") from error
+    launch_webapp(url, arguments)
 
 
 def _refuse_if_secret(command: list[str]) -> None:

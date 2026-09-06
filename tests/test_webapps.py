@@ -22,12 +22,6 @@ from omajelly.webapps import (
 from tests.support import TOKEN
 
 _LAUNCH_ARGV = [
-    "systemd-run",
-    "--user",
-    "--collect",
-    "--quiet",
-    "--no-block",
-    "--",
     "omarchy-launch-webapp",
     "http://jellyfin:8096/web/",
 ]
@@ -193,14 +187,8 @@ class WebappTests(unittest.TestCase):
         installer.assert_called_once_with()
         launcher.assert_called_once_with(
             [
-                "systemd-run",
-                "--user",
-                "--collect",
-                "--quiet",
-                "--no-block",
-                "--",
-                "chromium",
-                "--app=http://jellyfin:8096/web/#/details?id=12345678",
+                "omarchy-launch-webapp",
+                "http://jellyfin:8096/web/#/details?id=12345678",
                 "--new-window",
                 "--disable-gpu",
                 "--disable-gpu-compositing",
