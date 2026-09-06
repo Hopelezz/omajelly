@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+import urllib.parse
 from typing import Any
 
 from omajelly.common import (
@@ -10,14 +10,24 @@ from omajelly.common import (
     JellyfinError,
     ResponseError,
     finite_integer,
-    read_regular_file,
     run_bounded_output,
     run_no_output,
 )
-from omajelly.config import validate_window_geometry
-from omajelly.constants import MAX_HYPR_BYTES, PLUGIN_ID, SCHEMA_VERSION
+from omajelly.config import load_config, validate_window_geometry
+from omajelly.constants import MAX_HYPR_BYTES, SCHEMA_VERSION
 
-PLAYER_APP_ID = PLUGIN_ID + ".player"
+_BROWSER_CLASS_MARKERS = (
+    "chromium",
+    "google-chrome",
+    "chrome",
+    "brave",
+    "vivaldi",
+    "microsoft-edge",
+    "msedge",
+    "opera",
+    "helium",
+)
+
 PLAYER_RESET_MARGIN = 16
 
 
@@ -92,6 +102,26 @@ def hypr_bring_player_script(pid: int, workspace: int, x: int, y: int) -> str:
         + str(y)
         + ", relative = false, window = target })); "
         "hl.dispatch(hl.dsp.focus({ window = target })); "
+        "hl.dispatch(hl.dsp.window.alter_zorder({ window = target, mode = 'top' })); "
+        "return 'ok'"
+    )
+
+
+def hypr_focus_player_script(pid: int, workspace: int) -> str:
+    if pid <= 0:
+        raise ValueError("player PID must be positive")
+    if workspace <= 0 or workspace > 1_000_000:
+        raise ValueError("workspace must be positive")
+    return (
+        "local target=nil; "
+        "for _,w in ipairs(hl.get_windows()) do "
+        "if w.pid == " + str(pid) + " then target=w; break end end; "
+        "if not target then error('missing') end; "
+        "hl.dispatch(hl.dsp.window.move({ workspace = '"
+        + str(workspace)
+        + "', follow = false, window = target })); "
+        "hl.dispatch(hl.dsp.focus({ window = target })); "
+        "hl.dispatch(hl.dsp.window.alter_zorder({ window = target, mode = 'top' })); "
         "return 'ok'"
     )
 
@@ -113,69 +143,48 @@ def _hypr_json(name: str) -> Any:
         raise ResponseError("Hyprland returned invalid window data") from error
 
 
-def _process_parent_id(pid: int) -> int:
-    if pid <= 0 or pid > 2_147_483_647:
-        return -1
-    try:
-        payload = read_regular_file(Path("/proc") / str(pid) / "status", 16 * 1024)
-    except (OSError, JellyfinError):
-        return -1
-    for line in payload.splitlines():
-        if line.startswith(b"PPid:"):
-            return finite_integer(line.removeprefix(b"PPid:").strip(), -1)
-    return -1
+def _browser_class_blob(client: dict[str, Any]) -> str:
+    return (
+        str(client.get("class") or "") + " " + str(client.get("initialClass") or "")
+    ).lower()
 
 
-def _is_omajelly_play_helper(pid: int) -> bool:
-    if pid <= 0 or pid > 2_147_483_647:
+def _window_title_blob(client: dict[str, Any]) -> str:
+    return (
+        str(client.get("title") or "") + " " + str(client.get("initialTitle") or "")
+    ).lower()
+
+
+def is_jellyfin_webapp_window(client: dict[str, Any], server: str) -> bool:
+    if not isinstance(client, dict) or client.get("mapped") is not True:
         return False
-    try:
-        payload = read_regular_file(Path("/proc") / str(pid) / "cmdline", 16 * 1024)
-    except (OSError, JellyfinError):
+    class_blob = _browser_class_blob(client)
+    if not any(marker in class_blob for marker in _BROWSER_CLASS_MARKERS):
         return False
-    arguments = [part for part in payload.split(b"\0") if part]
-    if len(arguments) < 2:
-        return False
-    helpers = {
-        str(Path(__file__).resolve().parents[1] / "bin" / "omajelly").encode(),
-        str(
-            Path.home()
-            / ".config"
-            / "omarchy"
-            / "plugins"
-            / PLUGIN_ID
-            / "bin"
-            / "omajelly"
-        ).encode(),
-    }
-    if arguments[0] in helpers:
-        return arguments[1] == b"play"
-    return len(arguments) >= 3 and arguments[1] in helpers and arguments[2] == b"play"
+    parsed = urllib.parse.urlparse(server)
+    host = (parsed.hostname or "").lower()
+    path = (parsed.path or "").strip("/").split("/")[0].lower()
+    title_blob = _window_title_blob(client)
+    haystack = class_blob + " " + title_blob
+    host_folded = host.replace(".", "-")
+    if host and len(host) >= 3 and (host in haystack or host_folded in haystack):
+        return True
+    if path and len(path) >= 3 and path in haystack.replace("-", "_"):
+        return True
+    return "jellyfin" in title_blob
 
 
 def windowed_player_clients() -> list[dict[str, Any]]:
+    config = load_config()
+    if config is None:
+        return []
+    server = str(config["server"])
     clients = _hypr_json("clients")
     if not isinstance(clients, list) or len(clients) > 4096:
         raise ResponseError("Hyprland returned invalid window data")
     result: list[dict[str, Any]] = []
     for client in clients:
-        if not isinstance(client, dict) or client.get("mapped") is not True:
-            continue
-        pid = finite_integer(client.get("pid"), -1)
-        window_class = str(client.get("class") or "")
-        initial_class = str(client.get("initialClass") or "")
-        if (
-            _is_omajelly_play_helper(_process_parent_id(pid))
-            and (
-                window_class in {"mpv", PLAYER_APP_ID}
-                or initial_class in {"mpv", PLAYER_APP_ID}
-            )
-            and (
-                client.get("title") == "Omajelly"
-                or client.get("initialTitle") == "Omajelly"
-            )
-            and finite_integer(client.get("fullscreen"), -1) == 0
-        ):
+        if is_jellyfin_webapp_window(client, server):
             result.append(client)
     return result
 
@@ -184,13 +193,20 @@ def windowed_player_active() -> bool:
     return bool(windowed_player_clients())
 
 
+def _webapp_window_priority(client: dict[str, Any]) -> tuple[int, int]:
+    title = _window_title_blob(client)
+    is_failed_page = "page not found" in title or "not found" in title
+    focus_history = finite_integer(client.get("focusHistoryID"), 1_000_000)
+    return (1 if is_failed_page else 0, focus_history)
+
+
 def bring_player_to_active_workspace() -> None:
     candidates = windowed_player_clients()
     if not candidates:
-        raise ConfigurationError("No windowed Omajelly player is running")
-    player = max(candidates, key=lambda value: finite_integer(value.get("pid"), -1))
+        raise ConfigurationError("No Jellyfin webapp window is open")
+    player = min(candidates, key=_webapp_window_priority)
     pid = finite_integer(player.get("pid"), -1)
-    if pid <= 0 or pid > 2_147_483_647 or player.get("floating") is not True:
+    if pid <= 0 or pid > 2_147_483_647:
         raise ResponseError("Hyprland returned invalid Omajelly window data")
     monitors = _hypr_json("monitors")
     if not isinstance(monitors, list) or len(monitors) > 64:
@@ -229,12 +245,15 @@ def bring_player_to_active_workspace() -> None:
         or top > 10_000
     ):
         raise ResponseError("Hyprland returned invalid monitor data")
-    script = hypr_bring_player_script(
-        pid,
-        workspace,
-        monitor_x + left + PLAYER_RESET_MARGIN,
-        monitor_y + top + PLAYER_RESET_MARGIN,
-    )
+    if finite_integer(player.get("fullscreen"), 0) != 0:
+        script = hypr_focus_player_script(pid, workspace)
+    else:
+        script = hypr_bring_player_script(
+            pid,
+            workspace,
+            monitor_x + left + PLAYER_RESET_MARGIN,
+            monitor_y + top + PLAYER_RESET_MARGIN,
+        )
     try:
         return_code = run_no_output(["hyprctl", "eval", script], timeout=2)
     except FileNotFoundError as error:

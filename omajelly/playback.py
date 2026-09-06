@@ -28,6 +28,7 @@ from omajelly.common import (
     wall_deadline,
 )
 from omajelly.config import (
+    load_config,
     load_window_geometry,
     save_window_geometry,
     validate_window_geometry,
@@ -37,7 +38,9 @@ from omajelly.constants import MAX_PLAY_QUEUE_ITEMS, PLUGIN_ID
 from omajelly.ids import is_item_id, valid_item_id
 from omajelly.media_items import item_type, ticks_to_ms, ticks_to_seconds, user_data
 from omajelly.subtitles import subtitle_language
+from omajelly.webapps import launch_jellyfin_webapp
 from omajelly.windowing import (
+    bring_player_to_active_workspace,
     ensure_hypr_fullscreen,
     read_hypr_geometry,
     restore_hypr_geometry,
@@ -49,6 +52,11 @@ class PlaybackMode(StrEnum):
     FULLSCREEN = "fullscreen"
 
 
+class PlaybackBackend(StrEnum):
+    MPV = "mpv"
+    WEB = "web"
+
+
 class TimelineState(StrEnum):
     PLAYING = "playing"
     PAUSED = "paused"
@@ -58,6 +66,57 @@ class TimelineState(StrEnum):
 class WatchState(StrEnum):
     WATCHED = "watched"
     UNWATCHED = "unwatched"
+
+
+def jellyfin_web_sessions(client: JellyfinClient) -> dict[str, str]:
+    document = client.request_json("/Sessions")
+    if not isinstance(document, list) or len(document) > 4096:
+        raise ResponseError("Jellyfin returned invalid session data")
+    result: dict[str, str] = {}
+    for session in document:
+        if not isinstance(session, dict):
+            continue
+        if (
+            str(session.get("UserId") or "") != client.user_id
+            or str(session.get("Client") or "") != "Jellyfin Web"
+        ):
+            continue
+        session_id = str(session.get("Id") or "")
+        if not is_item_id(session_id):
+            continue
+        result[session_id] = str(session.get("LastActivityDate") or "")
+    return result
+
+
+def start_jellyfin_web_playback(
+    client: JellyfinClient, rating_key: str, previous_sessions: dict[str, str]
+) -> None:
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        sessions = jellyfin_web_sessions(client)
+        changed = [
+            session_id
+            for session_id, activity in sessions.items()
+            if previous_sessions.get(session_id) != activity
+        ]
+        if changed:
+            target = max(changed, key=lambda session_id: sessions[session_id])
+            client.request_empty(
+                "/Sessions/"
+                + target
+                + "/Playing?"
+                + urllib.parse.urlencode(
+                    {"playCommand": "PlayNow", "ItemIds": rating_key}
+                ),
+                method=HttpMethod.POST,
+            )
+            client.request_empty(
+                "/Sessions/" + target + "/Playing/Unpause",
+                method=HttpMethod.POST,
+            )
+            return
+        time.sleep(0.4)
+    raise ResponseError("Jellyfin Web did not connect in time")
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,14 +573,134 @@ def finish_playback_item(
             set_watch_state(client, item.rating_key, WatchState.WATCHED)
 
 
+def play_cached_file(path: Path, mode: PlaybackMode, rating_key: str) -> int:
+    from omajelly.downloads import downloads_root
+
+    if not isinstance(mode, PlaybackMode):
+        raise ConfigurationError("Playback mode must be windowed or fullscreen")
+    rating_key = valid_item_id(rating_key)
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(downloads_root().resolve())
+    except (OSError, ValueError) as error:
+        raise ConfigurationError("Cached media path is invalid") from error
+    if not resolved.is_file():
+        raise ConfigurationError("Cached media is missing")
+    client = None
+    item = None
+    with contextlib.suppress(JellyfinError, OSError):
+        client, _config = client_from_saved()
+        item = single_playback_item(client, rating_key)
+    arguments = [
+        "mpv",
+        "--no-config",
+        "--no-ytdl",
+        "--really-quiet",
+        "--keep-open=no",
+        "--force-window=yes",
+        "--osc=yes",
+        "--input-default-bindings=yes",
+        "--osd-level=1",
+        "--title=Omajelly",
+        "--wayland-app-id=" + PLUGIN_ID + ".player",
+    ]
+    if mode is PlaybackMode.FULLSCREEN:
+        arguments.append("--fullscreen")
+    else:
+        arguments.extend(["--autofit=960x540", "--geometry=50%:50%"])
+    if item is not None and item.resume_seconds > 0:
+        arguments.append("--start=" + str(item.resume_seconds))
+    ipc_socket = ""
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="omajelly-player-", dir="/tmp"
+        ) as ipc_directory:
+            os.chmod(ipc_directory, 0o700)
+            if client is not None and item is not None:
+                ipc_socket = str(Path(ipc_directory) / "mpv.sock")
+                arguments.append("--input-ipc-server=" + ipc_socket)
+            arguments.append(str(resolved))
+            player = subprocess.Popen(
+                arguments,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if mode is PlaybackMode.FULLSCREEN:
+                ensure_hypr_fullscreen(player.pid)
+            if client is None or item is None:
+                return_code = player.wait()
+            else:
+                last_position_ms = item.resume_seconds * 1000
+                next_report = 0.0
+                started = False
+                return_code = player.poll()
+                while return_code is None:
+                    now = time.monotonic()
+                    status = mpv_status(ipc_socket)
+                    if status is not None:
+                        position_ms, paused, _playlist = status
+                        last_position_ms = position_ms
+                        if now >= next_report:
+                            with contextlib.suppress(JellyfinError):
+                                if not started:
+                                    report_timeline(
+                                        client,
+                                        item,
+                                        last_position_ms,
+                                        TimelineState.PLAYING,
+                                    )
+                                    started = True
+                                report_timeline(
+                                    client,
+                                    item,
+                                    last_position_ms,
+                                    TimelineState.PAUSED if paused else TimelineState.PLAYING,
+                                )
+                            next_report = now + 10
+                    time.sleep(0.5)
+                    return_code = player.poll()
+                finish_playback_item(client, item, last_position_ms)
+    except FileNotFoundError as error:
+        raise ConfigurationError("mpv is not installed") from error
+    if return_code != 0:
+        raise ResponseError("mpv could not play this downloaded item")
+    return return_code
+
+
 def play(
     rating_key: str,
     mode: PlaybackMode,
     auto_play_next: bool = False,
     subtitle_search_language: str = "en",
+    backend: PlaybackBackend = PlaybackBackend.WEB,
 ) -> int:
     if not isinstance(mode, PlaybackMode):
         raise ConfigurationError("Playback mode must be windowed or fullscreen")
+    if not isinstance(backend, PlaybackBackend):
+        raise ConfigurationError("Playback backend must be mpv or web")
+    from omajelly.downloads import cached_media_path
+
+    cached = cached_media_path(rating_key)
+    if cached is not None:
+        return play_cached_file(cached, mode, rating_key)
+    if backend is PlaybackBackend.WEB:
+        config = load_config()
+        if config is None:
+            raise ConfigurationError("Omajelly is not configured")
+        url = jellyfin_playback_url(config, rating_key)
+        extra = None
+        if mode is PlaybackMode.FULLSCREEN:
+            extra = ["--start-fullscreen"]
+        launch_jellyfin_webapp(url, extra)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                bring_player_to_active_workspace()
+                break
+            except JellyfinError:
+                time.sleep(0.2)
+        return 0
     language = subtitle_language(subtitle_search_language)
     with wall_deadline(20, "Jellyfin playback setup exceeded twenty seconds"):
         client, _config = client_from_saved()
@@ -675,3 +854,13 @@ def jellyfin_web_url(config: dict[str, Any], rating_key: str = "") -> str:
         return origin + "/web/"
     rating_key = valid_item_id(rating_key)
     return origin + "/web/#/details?id=" + urllib.parse.quote(rating_key, safe="")
+
+
+def jellyfin_playback_url(config: dict[str, Any], rating_key: str) -> str:
+    origin = str(config["server"])
+    rating_key = valid_item_id(rating_key)
+    return (
+        origin
+        + "/web/#/details?id="
+        + urllib.parse.quote(rating_key, safe="")
+    )

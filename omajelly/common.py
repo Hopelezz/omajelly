@@ -89,7 +89,11 @@ def wall_deadline(seconds: int, message: str):
 
 
 def run_no_output(
-    command: list[str], *, input_bytes: bytes | None = None, timeout: float = 10
+    command: list[str],
+    *,
+    input_bytes: bytes | None = None,
+    timeout: float = 10,
+    env: dict[str, str] | None = None,
 ) -> int:
     process = subprocess.Popen(
         command,
@@ -97,6 +101,7 @@ def run_no_output(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=env,
     )
     try:
         if input_bytes is not None and process.stdin is not None:
@@ -108,7 +113,9 @@ def run_no_output(
         return -1
 
 
-def launch_detached(command: list[str]) -> None:
+def launch_detached(
+    command: list[str], env: dict[str, str] | None = None
+) -> None:
     subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
@@ -116,6 +123,7 @@ def launch_detached(command: list[str]) -> None:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         close_fds=True,
+        env=env,
     )
 
 

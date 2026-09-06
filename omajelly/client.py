@@ -122,6 +122,7 @@ class JellyfinClient:
         range_header: str = "",
         body: bytes | None = None,
         content_type: str = "",
+        timeout: float | None = None,
     ) -> Any:
         if not isinstance(method, HttpMethod):
             raise ConfigurationError("Invalid Jellyfin HTTP method")
@@ -137,7 +138,10 @@ class JellyfinClient:
             method=method.value,
         )
         try:
-            return self.opener.open(request, timeout=REQUEST_TIMEOUT)
+            return self.opener.open(
+                request,
+                timeout=REQUEST_TIMEOUT if timeout is None else timeout,
+            )
         except urllib.error.HTTPError as error:
             if error.code == 401:
                 error.close()
@@ -189,9 +193,24 @@ class JellyfinClient:
             raise ResponseError("Jellyfin returned an invalid document")
         return value
 
-    def request_empty(self, path: str, *, method: HttpMethod = HttpMethod.GET) -> None:
+    def request_empty(
+        self,
+        path: str,
+        *,
+        method: HttpMethod = HttpMethod.GET,
+        body: dict[str, Any] | None = None,
+    ) -> None:
+        payload = None
+        content_type = ""
+        if body is not None:
+            payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+            content_type = "application/json"
         try:
-            response = self.open(path, method=method)
+            response = self.open(
+                path, method=method, body=payload, content_type=content_type
+            )
         except urllib.error.HTTPError as error:
             status = error.code
             error.close()

@@ -10,7 +10,6 @@ from omajelly.common import (
     ConfigurationError,
     JellyfinError,
     clean_text,
-    launch_detached,
     wall_deadline,
 )
 from omajelly.config import load_config
@@ -29,6 +28,7 @@ from omajelly.quickconnect import (
     start_quick_connect,
 )
 from omajelly.playback import (
+    PlaybackBackend,
     PlaybackMode,
     WatchState,
     jellyfin_web_url,
@@ -36,6 +36,18 @@ from omajelly.playback import (
     set_watch_state,
 )
 from omajelly.subtitles import download_subtitle, search_subtitles
+from omajelly.webapps import (
+    install_jellyfin_webapp,
+    launch_jellyfin_webapp,
+    webapp_status,
+)
+from omajelly.downloads import (
+    downloads_document,
+    queue_download,
+    remove_download,
+    set_download_limit,
+    sync_downloads,
+)
 from omajelly.windowing import bring_player_to_active_workspace, windowed_player_active
 
 
@@ -79,6 +91,15 @@ def parser() -> argparse.ArgumentParser:
     )
     play_command.add_argument("--auto-play-next", action="store_true")
     play_command.add_argument("--subtitle-language", default="en")
+    play_command.add_argument(
+        "--backend",
+        type=PlaybackBackend,
+        choices=tuple(PlaybackBackend),
+        default=PlaybackBackend.WEB,
+    )
+    commands.add_parser("webapp-status")
+    webapp_install = commands.add_parser("webapp-install")
+    webapp_install.add_argument("--launch", action="store_true")
     subtitle_search = commands.add_parser("subtitle-search")
     subtitle_search.add_argument("--rating-key", required=True)
     subtitle_search.add_argument("--language", required=True)
@@ -92,6 +113,14 @@ def parser() -> argparse.ArgumentParser:
     mark_command.add_argument(
         "--state", type=WatchState, choices=tuple(WatchState), required=True
     )
+    commands.add_parser("download-list")
+    download_add = commands.add_parser("download-add")
+    download_add.add_argument("--rating-key", required=True)
+    download_remove = commands.add_parser("download-remove")
+    download_remove.add_argument("--rating-key", required=True)
+    commands.add_parser("download-sync")
+    download_limit = commands.add_parser("download-limit")
+    download_limit.add_argument("--gib", type=int, required=True)
     web = commands.add_parser("open-web")
     web.add_argument("--rating-key", default="")
     return result
@@ -158,7 +187,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.mode,
                 args.auto_play_next,
                 args.subtitle_language,
+                backend=args.backend,
             )
+        if args.command == "webapp-status":
+            print_json(webapp_status())
+            return 0
+        if args.command == "webapp-install":
+            print_json(install_jellyfin_webapp(launch=args.launch))
+            return 0
         if args.command == "subtitle-search":
             with wall_deadline(20, "Jellyfin subtitle search exceeded twenty seconds"):
                 client, _ = client_from_saved()
@@ -182,15 +218,28 @@ def main(argv: list[str] | None = None) -> int:
                 client, _ = client_from_saved()
                 set_watch_state(client, args.rating_key, args.state)
             return 0
+        if args.command == "download-list":
+            print_json(downloads_document())
+            return 0
+        if args.command == "download-add":
+            with wall_deadline(20, "Jellyfin download queue exceeded twenty seconds"):
+                print_json(queue_download(args.rating_key))
+            return 0
+        if args.command == "download-remove":
+            print_json(remove_download(args.rating_key))
+            return 0
+        if args.command == "download-sync":
+            print_json(sync_downloads())
+            return 0
+        if args.command == "download-limit":
+            print_json(set_download_limit(args.gib))
+            return 0
         if args.command == "open-web":
             config = load_config()
             if config is None:
                 raise ConfigurationError("Omajelly is not configured")
             url = jellyfin_web_url(config, args.rating_key)
-            try:
-                launch_detached(["xdg-open", url])
-            except FileNotFoundError as error:
-                raise ConfigurationError("xdg-open is unavailable") from error
+            launch_jellyfin_webapp(url)
             return 0
         raise ConfigurationError("Unknown command")
     except JellyfinError as error:

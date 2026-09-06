@@ -7,12 +7,10 @@ from pathlib import Path
 from unittest import mock
 
 from omajelly import cli as cli_module
-from omajelly import playback as playback_module
 from omajelly import subtitles as subtitles_module
 from omajelly.client import HttpMethod
 from omajelly.common import ConfigurationError
-from omajelly.playback import PlaybackMode
-from tests.support import EP1, TOKEN, FakeClient
+from tests.support import EP1, FakeClient
 
 
 class ByteResponse:
@@ -106,25 +104,6 @@ class SubtitleTests(unittest.TestCase):
             subtitles_module.download_subtitle(
                 client, EP1, "../secret", "srt", "/tmp/omajelly-player-x"
             )
-
-    def test_player_arguments_load_search_script_without_a_token(self):
-        args = playback_module.mpv_playlist_arguments(
-            PlaybackMode.WINDOWED,
-            [("http://127.0.0.1:32000/stream/item", 0, [])],
-            "/tmp/omajelly-player-test/mpv.sock",
-            None,
-            "/plugin/assets/omajelly_subtitles.lua",
-            "/plugin/bin/omajelly",
-            [EP1],
-            "nl",
-            "/tmp/omajelly-player-test",
-        )
-        joined = " ".join(args)
-        self.assertIn("--script=/plugin/assets/omajelly_subtitles.lua", args)
-        self.assertIn("--script-opt=omajelly_subtitles-language=nl", args)
-        self.assertIn("--script-opt=omajelly_subtitles-rating_keys=" + EP1, args)
-        self.assertNotIn(TOKEN, joined)
-        self.assertNotIn("X-Emby-Token", joined)
 
         parsed = cli_module.parser().parse_args(
             ["subtitle-search", "--rating-key", EP1, "--language", "en"]

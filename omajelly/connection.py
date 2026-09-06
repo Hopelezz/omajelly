@@ -294,11 +294,23 @@ def configure_connection(
 
 
 def clear_configuration(store: SecretStore | None = None) -> dict[str, Any]:
+    from omajelly.downloads import clear_downloads
     from omajelly.quickconnect import clear_pending
+    from omajelly.webapps import remove_created_jellyfin_webapp
 
+    with contextlib.suppress(JellyfinError, OSError):
+        remove_created_jellyfin_webapp()
+    with contextlib.suppress(JellyfinError, OSError):
+        clear_downloads()
     (store or SecretStore()).clear()
     clear_pending()
-    for path in (config_home() / "config.json", cache_home() / "recent.json"):
+    for path in (
+        config_home() / "config.json",
+        config_home() / "created-webapp.json",
+        config_home() / "downloads.json",
+        config_home() / "downloads.lock",
+        cache_home() / "recent.json",
+    ):
         with contextlib.suppress(FileNotFoundError):
             unlink_private_file(path)
     return with_connection(status_document(), None)
