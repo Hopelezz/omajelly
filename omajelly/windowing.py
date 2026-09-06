@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.parse
 from typing import Any
@@ -29,6 +30,14 @@ _BROWSER_CLASS_MARKERS = (
 )
 
 PLAYER_RESET_MARGIN = 16
+_HYPR_ADDRESS = re.compile(r"^0x[0-9A-Fa-f]{1,16}$")
+
+
+def valid_hypr_address(value: Any) -> str:
+    address = str(value or "")
+    if not _HYPR_ADDRESS.fullmatch(address):
+        raise ResponseError("Hyprland returned invalid Omajelly window data")
+    return address
 
 
 def hypr_fullscreen_script(pid: int) -> str:
@@ -81,9 +90,8 @@ def hypr_geometry_script(pid: int, geometry: dict[str, int]) -> str:
     )
 
 
-def hypr_bring_player_script(pid: int, workspace: int, x: int, y: int) -> str:
-    if pid <= 0:
-        raise ValueError("player PID must be positive")
+def hypr_bring_player_script(address: str, workspace: int, x: int, y: int) -> str:
+    target = valid_hypr_address(address)
     if workspace <= 0 or workspace > 1_000_000:
         raise ValueError("workspace must be positive")
     if abs(x) > 100_000 or abs(y) > 100_000:
@@ -91,7 +99,9 @@ def hypr_bring_player_script(pid: int, workspace: int, x: int, y: int) -> str:
     return (
         "local target=nil; "
         "for _,w in ipairs(hl.get_windows()) do "
-        "if w.pid == " + str(pid) + " then target=w; break end end; "
+        "if w.address == '"
+        + target
+        + "' then target=w; break end end; "
         "if not target then error('missing') end; "
         "hl.dispatch(hl.dsp.window.move({ workspace = '"
         + str(workspace)
@@ -107,15 +117,16 @@ def hypr_bring_player_script(pid: int, workspace: int, x: int, y: int) -> str:
     )
 
 
-def hypr_focus_player_script(pid: int, workspace: int) -> str:
-    if pid <= 0:
-        raise ValueError("player PID must be positive")
+def hypr_focus_player_script(address: str, workspace: int) -> str:
+    target = valid_hypr_address(address)
     if workspace <= 0 or workspace > 1_000_000:
         raise ValueError("workspace must be positive")
     return (
         "local target=nil; "
         "for _,w in ipairs(hl.get_windows()) do "
-        "if w.pid == " + str(pid) + " then target=w; break end end; "
+        "if w.address == '"
+        + target
+        + "' then target=w; break end end; "
         "if not target then error('missing') end; "
         "hl.dispatch(hl.dsp.window.move({ workspace = '"
         + str(workspace)
@@ -155,6 +166,16 @@ def _window_title_blob(client: dict[str, Any]) -> str:
     ).lower()
 
 
+def _is_standalone_app_class(class_blob: str, host: str) -> bool:
+    if "chrome-" not in class_blob:
+        return False
+    if host and len(host) >= 3:
+        folded = host.replace(".", "-")
+        if host in class_blob or folded in class_blob:
+            return True
+    return "jellyfin" in class_blob
+
+
 def is_jellyfin_webapp_window(client: dict[str, Any], server: str) -> bool:
     if not isinstance(client, dict) or client.get("mapped") is not True:
         return False
@@ -163,6 +184,8 @@ def is_jellyfin_webapp_window(client: dict[str, Any], server: str) -> bool:
         return False
     parsed = urllib.parse.urlparse(server)
     host = (parsed.hostname or "").lower()
+    if not _is_standalone_app_class(class_blob, host):
+        return False
     path = (parsed.path or "").strip("/").split("/")[0].lower()
     title_blob = _window_title_blob(client)
     haystack = class_blob + " " + title_blob
@@ -171,7 +194,7 @@ def is_jellyfin_webapp_window(client: dict[str, Any], server: str) -> bool:
         return True
     if path and len(path) >= 3 and path in haystack.replace("-", "_"):
         return True
-    return "jellyfin" in title_blob
+    return "jellyfin" in title_blob or "jellyfin" in class_blob
 
 
 def windowed_player_clients() -> list[dict[str, Any]]:
@@ -193,6 +216,46 @@ def windowed_player_active() -> bool:
     return bool(windowed_player_clients())
 
 
+def _client_address(client: dict[str, Any]) -> str:
+    try:
+        return valid_hypr_address(client.get("address"))
+    except ResponseError:
+        return ""
+
+
+def mapped_browser_clients() -> list[dict[str, Any]]:
+    clients = _hypr_json("clients")
+    if not isinstance(clients, list) or len(clients) > 4096:
+        raise ResponseError("Hyprland returned invalid window data")
+    result: list[dict[str, Any]] = []
+    for client in clients:
+        if not isinstance(client, dict) or client.get("mapped") is not True:
+            continue
+        if any(
+            marker in _browser_class_blob(client) for marker in _BROWSER_CLASS_MARKERS
+        ):
+            result.append(client)
+    return result
+
+
+def browser_window_addresses() -> frozenset[str]:
+    result: set[str] = set()
+    for client in mapped_browser_clients():
+        address = _client_address(client)
+        if address:
+            result.add(address)
+    return frozenset(result)
+
+
+def player_window_addresses() -> frozenset[str]:
+    result: set[str] = set()
+    for client in windowed_player_clients():
+        address = _client_address(client)
+        if address:
+            result.add(address)
+    return frozenset(result)
+
+
 def _webapp_window_priority(client: dict[str, Any]) -> tuple[int, int]:
     title = _window_title_blob(client)
     is_failed_page = "page not found" in title or "not found" in title
@@ -200,14 +263,20 @@ def _webapp_window_priority(client: dict[str, Any]) -> tuple[int, int]:
     return (1 if is_failed_page else 0, focus_history)
 
 
-def bring_player_to_active_workspace() -> None:
+def bring_player_to_active_workspace(
+    *, ignore_addresses: frozenset[str] | None = None
+) -> None:
     candidates = windowed_player_clients()
+    if ignore_addresses:
+        candidates = [
+            client
+            for client in candidates
+            if _client_address(client) not in ignore_addresses
+        ]
     if not candidates:
         raise ConfigurationError("No Jellyfin webapp window is open")
     player = min(candidates, key=_webapp_window_priority)
-    pid = finite_integer(player.get("pid"), -1)
-    if pid <= 0 or pid > 2_147_483_647:
-        raise ResponseError("Hyprland returned invalid Omajelly window data")
+    address = valid_hypr_address(player.get("address"))
     monitors = _hypr_json("monitors")
     if not isinstance(monitors, list) or len(monitors) > 64:
         raise ResponseError("Hyprland returned invalid monitor data")
@@ -246,10 +315,10 @@ def bring_player_to_active_workspace() -> None:
     ):
         raise ResponseError("Hyprland returned invalid monitor data")
     if finite_integer(player.get("fullscreen"), 0) != 0:
-        script = hypr_focus_player_script(pid, workspace)
+        script = hypr_focus_player_script(address, workspace)
     else:
         script = hypr_bring_player_script(
-            pid,
+            address,
             workspace,
             monitor_x + left + PLAYER_RESET_MARGIN,
             monitor_y + top + PLAYER_RESET_MARGIN,

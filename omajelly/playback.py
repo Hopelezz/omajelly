@@ -41,6 +41,7 @@ from omajelly.subtitles import subtitle_language
 from omajelly.webapps import launch_jellyfin_webapp
 from omajelly.windowing import (
     bring_player_to_active_workspace,
+    browser_window_addresses,
     ensure_hypr_fullscreen,
     read_hypr_geometry,
     restore_hypr_geometry,
@@ -692,11 +693,12 @@ def play(
         extra = None
         if mode is PlaybackMode.FULLSCREEN:
             extra = ["--start-fullscreen"]
+        existing = browser_window_addresses()
         launch_jellyfin_webapp(url, extra)
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             try:
-                bring_player_to_active_workspace()
+                bring_player_to_active_workspace(ignore_addresses=existing)
                 break
             except JellyfinError:
                 time.sleep(0.2)

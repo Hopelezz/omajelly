@@ -65,6 +65,9 @@ class JellyfinPlaybackTests(unittest.TestCase):
             mock.patch.object(
                 playback_module, "launch_jellyfin_webapp"
             ) as launcher,
+            mock.patch.object(
+                playback_module, "browser_window_addresses", return_value=frozenset()
+            ),
             mock.patch.object(playback_module, "bring_player_to_active_workspace"),
         ):
             self.assertEqual(
@@ -240,18 +243,20 @@ class JellyfinPlaybackTests(unittest.TestCase):
         clients = [
             {
                 "pid": 12345,
+                "address": "0x222",
+                "class": "chromium",
+                "title": "Home - Jellyfin",
+                "mapped": True,
+                "floating": True,
+                "fullscreen": 0,
+            },
+            {
+                "pid": 12345,
+                "address": "0x111",
                 "class": "chrome-jellyfin__web_-Default",
                 "title": "Episode - Jellyfin",
                 "mapped": True,
                 "floating": False,
-                "fullscreen": 0,
-            },
-            {
-                "pid": 99999,
-                "class": "chromium",
-                "title": "Unrelated tab",
-                "mapped": True,
-                "floating": True,
                 "fullscreen": 0,
             },
         ]
@@ -284,13 +289,39 @@ class JellyfinPlaybackTests(unittest.TestCase):
         ):
             windowing_module.bring_player_to_active_workspace()
         script = command.call_args.args[0][2]
-        self.assertIn("w.pid == 12345", script)
+        self.assertIn("w.address == '0x111'", script)
+        self.assertNotIn("w.pid ==", script)
         self.assertIn("workspace = '2'", script)
         self.assertIn("alter_zorder", script)
+
+        with (
+            mock.patch.object(
+                windowing_module,
+                "load_config",
+                return_value={"server": "http://jellyfin:8096"},
+            ),
+            mock.patch.object(
+                windowing_module,
+                "run_bounded_output",
+                return_value=(0, json.dumps(clients).encode("utf-8")),
+            ),
+        ):
+            self.assertEqual(
+                windowing_module.browser_window_addresses(),
+                frozenset({"0x111", "0x222"}),
+            )
+            self.assertEqual(
+                windowing_module.player_window_addresses(), frozenset({"0x111"})
+            )
+            with self.assertRaises(ConfigurationError):
+                windowing_module.bring_player_to_active_workspace(
+                    ignore_addresses=frozenset({"0x111"})
+                )
 
         fullscreen_clients = [
             {
                 "pid": 12345,
+                "address": "0x111",
                 "class": "chrome-jellyfin__web_-Default",
                 "title": "Episode - Jellyfin",
                 "mapped": True,
@@ -318,12 +349,13 @@ class JellyfinPlaybackTests(unittest.TestCase):
         ):
             windowing_module.bring_player_to_active_workspace()
         script = command.call_args.args[0][2]
-        self.assertIn("w.pid == 12345", script)
+        self.assertIn("w.address == '0x111'", script)
         self.assertNotIn("relative = false", script)
 
         candidates_with_failed_page = [
             {
                 "pid": 99999,
+                "address": "0xdef",
                 "class": "chrome-jellyfin__web_-Default",
                 "title": "Page not found",
                 "mapped": True,
@@ -332,6 +364,7 @@ class JellyfinPlaybackTests(unittest.TestCase):
             },
             {
                 "pid": 12345,
+                "address": "0xabc",
                 "class": "chrome-jellyfin__web_-Default",
                 "title": "Flowgate",
                 "mapped": True,
@@ -358,7 +391,7 @@ class JellyfinPlaybackTests(unittest.TestCase):
             ) as command,
         ):
             windowing_module.bring_player_to_active_workspace()
-        self.assertIn("w.pid == 12345", command.call_args.args[0][2])
+        self.assertIn("w.address == '0xabc'", command.call_args.args[0][2])
 
         with (
             mock.patch.object(
