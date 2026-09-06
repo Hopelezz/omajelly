@@ -19,178 +19,105 @@ from omajelly.config import (
     save_window_geometry,
     validate_window_geometry,
 )
-from omajelly.constants import MAX_HYPR_BYTES, PLUGIN_ID
-from omajelly.playback import PlaybackItem, PlaybackMode, TimelineState, WatchState
-from tests.support import EP1, EP2, EP3, MOVIE, SHOW, TOKEN, USER, FakeClient
-
-
-def playback_info(source_id: str = "source1") -> dict:
-    return {
-        "PlaySessionId": "session1",
-        "MediaSources": [
-            {
-                "Id": source_id,
-                "RunTimeTicks": 300 * 10_000_000,
-                "MediaStreams": [
-                    {"Type": "Audio", "Index": 0, "Codec": "aac"},
-                    {"Type": "Subtitle", "Index": 1, "Codec": "srt"},
-                ],
-            }
-        ],
-    }
-
-
-def playable_item(item_id: str, item_type: str = "Episode", series_id: str = SHOW) -> dict:
-    document = {
-        "Id": item_id,
-        "Type": item_type,
-        "RunTimeTicks": 300 * 10_000_000,
-        "UserData": {"PlaybackPositionTicks": 125 * 10_000_000, "Played": False},
-    }
-    if item_type == "Episode":
-        document["SeriesId"] = series_id
-    return document
+from omajelly.constants import MAX_HYPR_BYTES
+from omajelly.playback import WatchState
+from tests.support import EP1, TOKEN, USER
 
 
 class JellyfinPlaybackTests(unittest.TestCase):
-    def test_mpv_argv_is_loopback_only_and_never_contains_the_token(self):
-        client = FakeClient(
-            {
-                "/PlaybackInfo": playback_info(),
-                "/Items/" + EP1: playable_item(EP1),
-            }
+    def test_jellyfin_web_urls_open_in_an_app_window_without_the_token(self):
+        config = {"server": "http://jellyfin:8096"}
+        self.assertEqual(
+            playback_module.jellyfin_web_url(config),
+            "http://jellyfin:8096/web/",
         )
-        item = playback_module.single_playback_item(client, EP1)
-        self.assertTrue(item.stream_path.startswith("/Videos/" + EP1 + "/stream?"))
-        self.assertIn("MediaSourceId=source1", item.stream_path)
-        self.assertEqual(item.resume_seconds, 125)
-        self.assertTrue(item.subtitle_paths[0].startswith("/Videos/" + EP1 + "/"))
-        self.assertNotIn(TOKEN, item.stream_path)
-        self.assertNotIn(client.token, item.stream_path)
-
-        args = playback_module.mpv_playlist_arguments(
-            PlaybackMode.WINDOWED,
-            [
-                (
-                    "http://127.0.0.1:32100/stream/random",
-                    125,
-                    ["http://127.0.0.1:32100/subtitle/random/0"],
-                )
-            ],
+        self.assertEqual(
+            playback_module.jellyfin_web_url(config, EP1),
+            "http://jellyfin:8096/web/#/details?id=" + EP1,
         )
-        joined = " ".join(args)
-        self.assertNotIn(TOKEN, joined)
-        self.assertNotIn("X-Emby-Token", joined)
-        self.assertIn("--autofit=960x540", args)
-        self.assertNotIn("--wayland-app-id=" + PLUGIN_ID + ".player", args)
-        self.assertIn("--osc=yes", args)
-        self.assertIn("http://127.0.0.1:32100/stream/random", args)
-        for argument in args:
-            if argument.startswith("http"):
-                self.assertTrue(argument.startswith("http://127.0.0.1:"))
+        self.assertNotIn(TOKEN, playback_module.jellyfin_web_url(config, EP1))
+        with self.assertRaises(ConfigurationError):
+            playback_module.jellyfin_web_url(config, "../42")
 
-        queue_args = playback_module.mpv_playlist_arguments(
-            PlaybackMode.WINDOWED,
-            [
-                ("http://127.0.0.1:32100/stream/random/0", 125, []),
-                (
-                    "http://127.0.0.1:32100/stream/random/1",
-                    0,
-                    ["http://127.0.0.1:32100/subtitle/random/1"],
+        with (
+            mock.patch.object(cli_module, "load_config", return_value=config),
+            mock.patch.object(cli_module, "launch_jellyfin_webapp") as launcher,
+        ):
+            self.assertEqual(cli_module.main(["open-web"]), 0)
+        launcher.assert_called_once_with("http://jellyfin:8096/web/")
+
+    def test_play_backend_web_opens_an_app_window_without_the_token(self):
+        config = {"server": "http://jellyfin:8096"}
+        url = playback_module.jellyfin_playback_url(config, EP1)
+        self.assertEqual(
+            url,
+            "http://jellyfin:8096/web/#/details?id=" + EP1,
+        )
+        self.assertNotIn(TOKEN, url)
+        with self.assertRaises(ConfigurationError):
+            playback_module.jellyfin_playback_url(config, "../42")
+
+        with (
+            mock.patch.object(playback_module, "load_config", return_value=config),
+            mock.patch(
+                "omajelly.downloads.cached_media_path", return_value=None
+            ),
+            mock.patch.object(
+                playback_module, "launch_jellyfin_webapp"
+            ) as launcher,
+            mock.patch.object(playback_module, "bring_player_to_active_workspace"),
+        ):
+            self.assertEqual(
+                cli_module.main(
+                    ["play", "--rating-key", EP1, "--backend", "web"]
                 ),
+                0,
+            )
+            self.assertEqual(
+                cli_module.main(
+                    [
+                        "play",
+                        "--rating-key",
+                        EP1,
+                        "--backend",
+                        "web",
+                        "--mode",
+                        "fullscreen",
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual(
+            launcher.call_args_list,
+            [
+                mock.call(url, None),
+                mock.call(url, ["--start-fullscreen"]),
             ],
         )
-        self.assertEqual(queue_args.count("--{"), 2)
-        self.assertLess(
-            queue_args.index("http://127.0.0.1:32100/stream/random/0"),
-            queue_args.index("http://127.0.0.1:32100/stream/random/1"),
-        )
-        fullscreen = playback_module.mpv_playlist_arguments(
-            PlaybackMode.FULLSCREEN, [("http://127.0.0.1:32100/stream/random", 0, [])]
-        )
-        self.assertIn("--fullscreen", fullscreen)
-        self.assertIn("--wayland-app-id=" + PLUGIN_ID + ".player", fullscreen)
-        geometry = {
-            "schemaVersion": 1,
-            "x": 2100,
-            "y": 1300,
-            "width": 1120,
-            "height": 630,
-        }
-        restored = playback_module.mpv_playlist_arguments(
-            PlaybackMode.WINDOWED,
-            [("http://127.0.0.1:32100/stream/random", 0, [])],
-            window_geometry=geometry,
-        )
-        self.assertIn("--geometry=1120x630", restored)
-        self.assertNotIn("--autofit=960x540", restored)
-        geometry_script = windowing_module.hypr_geometry_script(12345, geometry)
-        self.assertIn("w.pid == 12345", geometry_script)
-        self.assertNotIn(TOKEN, geometry_script)
-
-    def test_auto_play_next_uses_later_episodes_and_skips_movies(self):
-        client = FakeClient(
-            {
-                "/PlaybackInfo": playback_info(),
-                "/Shows/" + SHOW + "/Episodes": {
-                    "Items": [
-                        playable_item(EP1),
-                        playable_item(EP2),
-                        playable_item(EP3),
-                    ]
-                },
-                "/Items/" + EP1: playable_item(EP1),
-                "/Items/" + EP2: playable_item(EP2),
-                "/Items/" + EP3: playable_item(EP3),
-                "/Items/" + MOVIE: playable_item(MOVIE, "Movie"),
-            }
-        )
-        queued = playback_module.queued_playback_items(client, EP2)
-        self.assertEqual([item.rating_key for item in queued], [EP2, EP3])
-
-        movie_only = playback_module.queued_playback_items(client, MOVIE)
-        self.assertEqual([item.rating_key for item in movie_only], [MOVIE])
-
-        parsed = cli_module.parser().parse_args(
-            [
-                "play",
-                "--rating-key",
-                EP2,
-                "--mode",
-                "windowed",
-                "--auto-play-next",
-            ]
-        )
-        self.assertTrue(parsed.auto_play_next)
-
-    def test_finishing_item_reports_stop_and_marks_watched_at_ninety_percent(self):
-        item = PlaybackItem(
-            rating_key=EP1,
-            media_type="episode",
-            stream_path="/Videos/" + EP1 + "/stream?Static=true&MediaSourceId=source1",
-            media_source_id="source1",
-            play_session_id="session1",
-            resume_seconds=0,
-            duration_ms=300_000,
-            subtitle_paths=(),
-        )
-        client = mock.Mock()
-        client.user_id = USER
-        playback_module.finish_playback_item(client, item, 270_000)
-        json_paths = [call.args[0] for call in client.request_json.call_args_list]
-        empty_paths = [call.args[0] for call in client.request_empty.call_args_list]
-        self.assertTrue(any(path.endswith("/Sessions/Playing/Stopped") for path in json_paths))
-        self.assertEqual(empty_paths, ["/Users/" + USER + "/PlayedItems/" + EP1])
-        self.assertEqual(client.request_empty.call_args.kwargs["method"], HttpMethod.POST)
-
-        client.reset_mock()
-        playback_module.finish_playback_item(client, item, 120_000)
-        self.assertEqual(client.request_empty.call_count, 0)
-        self.assertTrue(
-            client.request_json.call_args.args[0].endswith("/Sessions/Playing/Stopped")
+        self.assertEqual(
+            cli_module.parser().parse_args(["play", "--rating-key", EP1]).backend,
+            playback_module.PlaybackBackend.WEB,
         )
 
-    def test_watch_state_updates_use_played_items_and_validate_inputs(self):
+    def test_open_web_uses_the_omarchy_webapp_launcher(self):
+        config = {"server": "http://jellyfin:8096"}
+        self.assertEqual(
+            playback_module.jellyfin_web_url(config),
+            "http://jellyfin:8096/web/",
+        )
+        self.assertEqual(
+            playback_module.jellyfin_web_url(config, EP1),
+            "http://jellyfin:8096/web/#/details?id=" + EP1,
+        )
+        with self.assertRaises(ConfigurationError):
+            playback_module.jellyfin_web_url(config, "../42")
+
+        with (
+            mock.patch.object(cli_module, "load_config", return_value=config),
+            mock.patch.object(cli_module, "launch_jellyfin_webapp") as launcher,
+        ):
+            self.assertEqual(cli_module.main(["open-web"]), 0)
+        launcher.assert_called_once_with("http://jellyfin:8096/web/")
         client = mock.Mock()
         client.user_id = USER
         playback_module.set_watch_state(client, EP1, WatchState.WATCHED)
@@ -220,28 +147,6 @@ class JellyfinPlaybackTests(unittest.TestCase):
                 0,
             )
         command_client.request_empty.assert_called_once()
-
-    def test_jellyfin_web_urls_support_home_and_item_deep_links(self):
-        config = {"server": "http://jellyfin:8096"}
-        self.assertEqual(
-            playback_module.jellyfin_web_url(config),
-            "http://jellyfin:8096/web/",
-        )
-        self.assertEqual(
-            playback_module.jellyfin_web_url(config, EP1),
-            "http://jellyfin:8096/web/#/details?id=" + EP1,
-        )
-        with self.assertRaises(ConfigurationError):
-            playback_module.jellyfin_web_url(config, "../42")
-
-        with (
-            mock.patch.object(cli_module, "load_config", return_value=config),
-            mock.patch.object(cli_module, "launch_detached") as launcher,
-        ):
-            self.assertEqual(cli_module.main(["open-web"]), 0)
-        launcher.assert_called_once_with(
-            ["xdg-open", "http://jellyfin:8096/web/"]
-        )
 
     def test_player_geometry_is_private_bounded_and_read_from_own_pid(self):
         geometry = {
@@ -331,20 +236,20 @@ class JellyfinPlaybackTests(unittest.TestCase):
                 }
             )
 
-    def test_bring_player_targets_exact_app_on_focused_monitor(self):
+    def test_bring_player_targets_the_jellyfin_webapp_on_the_focused_monitor(self):
         clients = [
             {
                 "pid": 12345,
-                "class": PLUGIN_ID + ".player",
-                "title": "Omajelly",
+                "class": "chrome-jellyfin__web_-Default",
+                "title": "Episode - Jellyfin",
                 "mapped": True,
-                "floating": True,
+                "floating": False,
                 "fullscreen": 0,
             },
             {
                 "pid": 99999,
-                "class": "mpv",
-                "title": "Unrelated player",
+                "class": "chromium",
+                "title": "Unrelated tab",
                 "mapped": True,
                 "floating": True,
                 "fullscreen": 0,
@@ -362,6 +267,11 @@ class JellyfinPlaybackTests(unittest.TestCase):
         with (
             mock.patch.object(
                 windowing_module,
+                "load_config",
+                return_value={"server": "http://jellyfin:8096"},
+            ),
+            mock.patch.object(
+                windowing_module,
                 "run_bounded_output",
                 side_effect=[
                     (0, json.dumps(clients).encode("utf-8")),
@@ -371,23 +281,91 @@ class JellyfinPlaybackTests(unittest.TestCase):
             mock.patch.object(
                 windowing_module, "run_no_output", return_value=0
             ) as command,
-            mock.patch.object(
-                windowing_module,
-                "_is_omajelly_play_helper",
-                side_effect=lambda pid: pid == 54321,
-            ),
-            mock.patch.object(
-                windowing_module,
-                "_process_parent_id",
-                side_effect=lambda pid: 54321 if pid == 12345 else 1,
-            ),
         ):
             windowing_module.bring_player_to_active_workspace()
         script = command.call_args.args[0][2]
         self.assertIn("w.pid == 12345", script)
         self.assertIn("workspace = '2'", script)
+        self.assertIn("alter_zorder", script)
+
+        fullscreen_clients = [
+            {
+                "pid": 12345,
+                "class": "chrome-jellyfin__web_-Default",
+                "title": "Episode - Jellyfin",
+                "mapped": True,
+                "floating": False,
+                "fullscreen": 2,
+            }
+        ]
+        with (
+            mock.patch.object(
+                windowing_module,
+                "load_config",
+                return_value={"server": "http://jellyfin:8096"},
+            ),
+            mock.patch.object(
+                windowing_module,
+                "run_bounded_output",
+                side_effect=[
+                    (0, json.dumps(fullscreen_clients).encode("utf-8")),
+                    (0, json.dumps(monitors).encode("utf-8")),
+                ],
+            ),
+            mock.patch.object(
+                windowing_module, "run_no_output", return_value=0
+            ) as command,
+        ):
+            windowing_module.bring_player_to_active_workspace()
+        script = command.call_args.args[0][2]
+        self.assertIn("w.pid == 12345", script)
+        self.assertNotIn("relative = false", script)
+
+        candidates_with_failed_page = [
+            {
+                "pid": 99999,
+                "class": "chrome-jellyfin__web_-Default",
+                "title": "Page not found",
+                "mapped": True,
+                "fullscreen": 0,
+                "focusHistoryID": 0,
+            },
+            {
+                "pid": 12345,
+                "class": "chrome-jellyfin__web_-Default",
+                "title": "Flowgate",
+                "mapped": True,
+                "fullscreen": 0,
+                "focusHistoryID": 8,
+            },
+        ]
+        with (
+            mock.patch.object(
+                windowing_module,
+                "load_config",
+                return_value={"server": "http://jellyfin:8096"},
+            ),
+            mock.patch.object(
+                windowing_module,
+                "run_bounded_output",
+                side_effect=[
+                    (0, json.dumps(candidates_with_failed_page).encode("utf-8")),
+                    (0, json.dumps(monitors).encode("utf-8")),
+                ],
+            ),
+            mock.patch.object(
+                windowing_module, "run_no_output", return_value=0
+            ) as command,
+        ):
+            windowing_module.bring_player_to_active_workspace()
+        self.assertIn("w.pid == 12345", command.call_args.args[0][2])
 
         with (
+            mock.patch.object(
+                windowing_module,
+                "load_config",
+                return_value={"server": "http://jellyfin:8096"},
+            ),
             mock.patch.object(
                 windowing_module,
                 "run_bounded_output",
@@ -396,3 +374,68 @@ class JellyfinPlaybackTests(unittest.TestCase):
             self.assertRaises(ConfigurationError),
         ):
             windowing_module.bring_player_to_active_workspace()
+
+    def test_cached_play_reports_progress_and_marks_watched(self):
+        from omajelly.playback import PlaybackItem, PlaybackMode, play_cached_file
+        from tests.support import MOVIE
+
+        item = PlaybackItem(
+            rating_key=MOVIE,
+            media_type="movie",
+            stream_path="/Videos/" + MOVIE + "/stream?Static=true&MediaSourceId=src",
+            media_source_id="src",
+            play_session_id="session",
+            resume_seconds=0,
+            duration_ms=100000,
+            subtitle_paths=(),
+        )
+        client = mock.Mock()
+        client.user_id = USER
+        player = mock.Mock()
+        player.pid = 42
+        player.poll.side_effect = [None, 0]
+        with tempfile.TemporaryDirectory() as directory:
+            media = (
+                Path(directory)
+                / "cache"
+                / "omajelly"
+                / "downloads"
+                / MOVIE
+                / "media"
+            )
+            media.parent.mkdir(parents=True)
+            media.write_bytes(b"video")
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"XDG_CACHE_HOME": str(Path(directory) / "cache")},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    playback_module, "client_from_saved", return_value=(client, {})
+                ),
+                mock.patch.object(
+                    playback_module, "single_playback_item", return_value=item
+                ),
+                mock.patch.object(
+                    playback_module.subprocess, "Popen", return_value=player
+                ),
+                mock.patch.object(
+                    playback_module, "mpv_status", return_value=(95000, False, 0)
+                ),
+                mock.patch.object(playback_module.time, "sleep"),
+            ):
+                self.assertEqual(
+                    play_cached_file(media, PlaybackMode.WINDOWED, MOVIE), 0
+                )
+        paths = [call.args[0] for call in client.request_json.call_args_list]
+        self.assertTrue(any("/Sessions/Playing" in path for path in paths))
+        self.assertTrue(any(path.endswith("/Sessions/Playing/Stopped") for path in paths))
+        client.request_empty.assert_called_once()
+        self.assertEqual(
+            client.request_empty.call_args.args[0],
+            "/Users/" + USER + "/PlayedItems/" + MOVIE,
+        )
+        self.assertEqual(
+            client.request_empty.call_args.kwargs["method"], HttpMethod.POST
+        )

@@ -38,11 +38,12 @@ Item {
   readonly property string pluginRoot: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/io.github.hopelezz.omajelly"
   readonly property string helperCommand: pluginRoot + "/bin/omajelly"
+  readonly property bool browsingDownloads: browseKind === "downloads"
   readonly property bool searching: query.trim() !== ""
   readonly property string requestKind: searching ? "search" : browseKind
   readonly property string searchScope: browseKind === "shows" ? "shows" : "movies"
-  readonly property bool hasPrevious: offset > 0
-  readonly property bool hasNext: offset + items.length < total
+  readonly property bool hasPrevious: !browsingDownloads && offset > 0
+  readonly property bool hasNext: !browsingDownloads && offset + items.length < total
   readonly property color onScrim: "white"
   readonly property color onScrimDim: Qt.rgba(1, 1, 1, 0.58)
   readonly property color onScrimUrgent: "#ff6b6b"
@@ -50,7 +51,8 @@ Item {
   function open(payloadJson) {
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) {}
-    browseKind = payload.view === "series" ? "shows" : "movies"
+    browseKind = payload.view === "series" ? "shows"
+      : (payload.view === "downloads" ? "downloads" : "movies")
     query = ""
     offset = 0
     selectedIndex = 0
@@ -59,6 +61,7 @@ Item {
     focusPrimed = false
     opened = true
     focusPrimeTimer.restart()
+    JellyCore.JellyfinState.loadDownloads()
     loadPage()
     Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
   }
@@ -83,17 +86,34 @@ Item {
   }
 
   function setKind(kind) {
-    browseKind = kind === "shows" ? "shows" : "movies"
+    browseKind = kind === "shows" ? "shows" : (kind === "downloads" ? "downloads" : "movies")
     query = ""
     offset = 0
     selectedIndex = 0
     expandedShowKey = ""
     expandedSeasonKey = ""
-    loadPage()
+    error = ""
+    if (browseKind === "downloads") {
+      loading = false
+      browseProcess.running = false
+      JellyCore.JellyfinState.loadDownloads()
+      rebuildDisplay()
+    } else {
+      loadPage()
+    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function rebuildDisplay() {
+    if (browseKind === "downloads") {
+      var rows = JellyCore.JellyfinState.downloadItems
+      if (query.trim() !== "")
+        rows = rows.filter(function(item) { return Model.matchesMediaQuery(item, query) })
+      displayItems = rows
+      total = JellyCore.JellyfinState.downloadItems.length
+      selectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(0, displayItems.length - 1)))
+      return
+    }
     displayItems = browseKind === "shows"
       ? Model.flattenAccordion(
           items,
@@ -170,6 +190,12 @@ Item {
 
   function loadPage() {
     if (!opened) return
+    if (browseKind === "downloads") {
+      loading = false
+      JellyCore.JellyfinState.loadDownloads()
+      rebuildDisplay()
+      return
+    }
     if (browseProcess.running) {
       reloadQueued = true
       return
@@ -207,6 +233,23 @@ Item {
     if (displayItems.length === 0) return
     selectedIndex = (selectedIndex + delta + displayItems.length) % displayItems.length
     Qt.callLater(function() { browserList.positionViewAtIndex(selectedIndex, ListView.Contain) })
+  }
+
+  function queueOrRemoveDownload() {
+    if (displayItems.length === 0) return
+    var item = displayItems[selectedIndex]
+    if (!item || item.playable === false) return
+    if (browseKind === "downloads" || JellyCore.JellyfinState.downloadStateFor(item))
+      JellyCore.JellyfinState.removeDownload(item)
+    else
+      JellyCore.JellyfinState.queueDownload(item)
+  }
+
+  function saveButtonLabel(item) {
+    if (!item || item.playable === false) return ""
+    if (browseKind === "downloads" || JellyCore.JellyfinState.downloadStateFor(item))
+      return "REMOVE"
+    return "SAVE"
   }
 
   function activate(item) {
@@ -265,6 +308,9 @@ Item {
       if (!JellyCore.JellyfinState.playing && root.opened) Qt.callLater(root.loadPage)
     }
     function onFolderChildrenChanged() { if (root.opened) root.rebuildDisplay() }
+    function onDownloadItemsChanged() {
+      if (root.opened && root.browseKind === "downloads") root.rebuildDisplay()
+    }
   }
 
   Process {
@@ -283,6 +329,10 @@ Item {
     }
     onExited: function(exitCode) {
       root.loading = false
+      if (root.browseKind === "downloads") {
+        root.rebuildDisplay()
+        return
+      }
       if (root.reloadQueued) {
         Qt.callLater(root.loadPage)
         return
@@ -348,6 +398,14 @@ Item {
         } else if (text === "/") { searchField.forceActiveFocus(); event.accepted = true }
         else if (text === "m" || text === "M") { root.setKind("movies"); event.accepted = true }
         else if (text === "s" || text === "S") { root.setKind("shows"); event.accepted = true }
+        else if (text === "d" || text === "D") { root.setKind("downloads"); event.accepted = true }
+        else if (text === "y" || text === "Y") { root.queueOrRemoveDownload(); event.accepted = true }
+        else if (text === "x" || text === "X") {
+          if (root.displayItems.length > 0 && (root.browseKind === "downloads"
+              || JellyCore.JellyfinState.downloadStateFor(root.displayItems[root.selectedIndex])))
+            JellyCore.JellyfinState.removeDownload(root.displayItems[root.selectedIndex])
+          event.accepted = true
+        }
         else if (text === "n" || text === "N") { root.nextPage(); event.accepted = true }
         else if (text === "p" || text === "P") { root.previousPage(); event.accepted = true }
       }
@@ -394,8 +452,10 @@ Item {
 
               Text {
                 text: root.searching
-                  ? (root.searchScope === "movies" ? "SEARCH MOVIES" : "SEARCH SHOWS")
-                  : (root.browseKind === "movies" ? "ALL MOVIES" : "ALL SHOWS")
+                  ? (root.browseKind === "downloads" ? "SEARCH DOWNLOADS"
+                    : (root.searchScope === "movies" ? "SEARCH MOVIES" : "SEARCH SHOWS"))
+                  : (root.browseKind === "downloads" ? "DOWNLOADS"
+                    : (root.browseKind === "movies" ? "ALL MOVIES" : "ALL SHOWS"))
                 textFormat: Text.PlainText
                 color: root.onScrimDim
                 font.family: Style.font.family
@@ -436,6 +496,16 @@ Item {
               active: root.browseKind === "shows"
               onClicked: root.setKind("shows")
             }
+
+            Button {
+              text: "Downloads"
+              foreground: root.onScrim
+              fontFamily: Style.font.family
+              bordered: true
+              active: root.browseKind === "downloads"
+                || JellyCore.JellyfinState.syncingDownloads
+              onClicked: root.setKind("downloads")
+            }
           }
 
           Item {
@@ -448,13 +518,20 @@ Item {
               width: parent.width
               text: root.query
               maximumLength: 80
-              placeholderText: root.searchScope === "movies"
-                ? "Fuzzy-search movies  /" : "Fuzzy-search shows  /"
+              placeholderText: root.browseKind === "downloads"
+                ? "Search saved titles  /"
+                : (root.searchScope === "movies"
+                  ? "Fuzzy-search movies  /" : "Fuzzy-search shows  /")
               foreground: root.onScrim
               font.family: Style.font.family
               onTextChanged: {
                 root.query = text
-                searchTimer.restart()
+                if (root.browseKind === "downloads") {
+                  searchTimer.stop()
+                  root.rebuildDisplay()
+                } else {
+                  searchTimer.restart()
+                }
               }
               Keys.onDownPressed: {
                 keyCatcher.forceActiveFocus()
@@ -472,11 +549,18 @@ Item {
           }
 
           Text {
-            visible: root.error !== "" || JellyCore.JellyfinState.folderError !== ""
+            visible: JellyCore.JellyfinState.downloadMessage !== ""
+              || root.error !== "" || JellyCore.JellyfinState.folderError !== ""
             width: parent.width
-            text: Model.plainText(root.error || JellyCore.JellyfinState.folderError, 220)
+            text: Model.plainText(
+              JellyCore.JellyfinState.downloadMessage
+                || root.error
+                || JellyCore.JellyfinState.folderError,
+              220
+            )
             textFormat: Text.PlainText
-            color: root.onScrimUrgent
+            color: JellyCore.JellyfinState.downloadMessage !== ""
+              ? Color.accent : root.onScrimUrgent
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
@@ -494,11 +578,15 @@ Item {
               anchors.fill: parent
               text: root.loading ? "Loading Jellyfin library…"
                 : (JellyCore.JellyfinState.folderLoadingKey !== ""
-                  ? "Opening folder…" : "No matching media")
+                  ? "Opening folder…"
+                  : (root.browseKind === "downloads"
+                    ? "Press Y or SAVE on a title in Movies or Shows."
+                    : "No matching media"))
               textFormat: Text.PlainText
               color: root.onScrimDim
               font.family: Style.font.family
               font.pixelSize: Style.font.body
+              wrapMode: Text.WordWrap
               horizontalAlignment: Text.AlignHCenter
               verticalAlignment: Text.AlignVCenter
             }
@@ -526,6 +614,7 @@ Item {
                 hasCursor: root.selectedIndex === index
 
                 MouseArea {
+                  id: rowMouse
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
@@ -556,30 +645,70 @@ Item {
                 Column {
                   anchors.left: kindIcon.right
                   anchors.leftMargin: Style.space(10)
-                  anchors.right: watchState.left
+                  anchors.right: saveButton.visible ? saveButton.left : watchState.left
                   anchors.rightMargin: Style.space(14)
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(1)
 
-                  Text {
+                  MarqueeLabel {
                     width: parent.width
                     text: Model.plainText(mediaRow.modelData.title, 256)
-                    textFormat: Text.PlainText
                     color: root.onScrim
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.body
-                    font.bold: mediaRow.modelData.watchState !== "watched"
-                    elide: Text.ElideRight
+                    fontFamily: Style.font.family
+                    fontPixelSize: Style.font.body
+                    fontBold: mediaRow.modelData.watchState !== "watched"
+                    scrolling: mediaRow.hasCursor || rowMouse.containsMouse
                   }
 
                   Text {
                     width: parent.width
-                    text: Model.plainText(mediaRow.modelData.subtitle, 256)
+                    text: {
+                      var parts = [Model.plainText(mediaRow.modelData.subtitle, 256)]
+                      var hint = Model.plainText(mediaRow.modelData.playbackHint, 80)
+                      var state = JellyCore.JellyfinState.downloadStateFor(mediaRow.modelData)
+                      if (root.browseKind === "downloads" && hint !== "")
+                        parts.push(hint)
+                      else if (state === "ready")
+                        parts.push("Saved")
+                      else if (state === "downloading" || state === "queued")
+                        parts.push(hint || "Saving")
+                      return parts.filter(function(part) { return part !== "" }).join(" · ")
+                    }
                     textFormat: Text.PlainText
                     color: root.onScrimDim
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
+                  }
+                }
+
+                Button {
+                  id: saveButton
+                  visible: mediaRow.modelData.playable !== false
+                  anchors.right: watchState.left
+                  anchors.rightMargin: visible ? Style.space(8) : 0
+                  anchors.verticalCenter: parent.verticalCenter
+                  z: 1
+                  width: visible ? implicitWidth : 0
+                  text: {
+                    var _items = JellyCore.JellyfinState.downloadItems
+                    return root.saveButtonLabel(mediaRow.modelData)
+                  }
+                  tooltipText: text === "REMOVE"
+                    ? "Remove from downloads" : "Save for offline playback"
+                  fontSize: Style.font.caption
+                  foreground: root.onScrim
+                  fontFamily: Style.font.family
+                  bordered: true
+                  enabled: !JellyCore.JellyfinState.queuingDownload
+                    && !JellyCore.JellyfinState.removingDownload
+                  onClicked: {
+                    root.selectedIndex = mediaRow.index
+                    keyCatcher.forceActiveFocus()
+                    if (text === "REMOVE")
+                      JellyCore.JellyfinState.removeDownload(mediaRow.modelData)
+                    else
+                      JellyCore.JellyfinState.queueDownload(mediaRow.modelData)
                   }
                 }
 
@@ -590,7 +719,9 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   text: mediaRow.modelData.playable === false
                     ? (root.isExpandedFolder(mediaRow.modelData) ? "CLOSE" : "OPEN")
-                    : Model.watchLabel(mediaRow.modelData.watchState)
+                    : (root.browseKind === "downloads"
+                      ? Model.plainText(mediaRow.modelData.playbackHint || "Queued", 80)
+                      : Model.watchLabel(mediaRow.modelData.watchState))
                   textFormat: Text.PlainText
                   color: root.onScrimDim
                   font.family: Style.font.family
@@ -609,7 +740,9 @@ Item {
             Text {
               id: browserKeys
               width: parent.width
-              text: "↑/↓ move · ↵ open · ← back · → forward · M/S · / search · Esc close"
+              text: root.browseKind === "downloads"
+                ? "↑/↓ move · ↵ play · Y/X remove · M/S library · Esc close"
+                : "↑/↓ move · ↵ open · Y save · D downloads · M/S · / search · Esc close"
               textFormat: Text.PlainText
               color: root.onScrimDim
               font.family: Style.font.family
@@ -618,8 +751,16 @@ Item {
               elide: Text.ElideRight
             }
 
-            Item {
-              id: pager
+            Text {
+              visible: root.browseKind === "downloads"
+              width: parent.width
+              text: root.total === 0 ? "0 saved"
+                : (root.total + (root.total === 1 ? " saved title" : " saved titles"))
+              textFormat: Text.PlainText
+              color: root.onScrimDim
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
               width: parent.width
               implicitHeight: Math.max(pageLabel.implicitHeight, pageButtons.implicitHeight)
 

@@ -28,7 +28,9 @@ Panel {
   readonly property var sourceItems: activeView === "movies"
     ? JellyCore.JellyfinState.movieItems
     : (activeView === "series" ? JellyCore.JellyfinState.seriesItems
-      : (activeView === "recent" ? JellyCore.JellyfinState.items : JellyCore.JellyfinState.continueItems))
+      : (activeView === "recent" ? JellyCore.JellyfinState.items
+        : (activeView === "downloads" ? JellyCore.JellyfinState.downloadItems
+          : JellyCore.JellyfinState.continueItems)))
   readonly property var watchFilteredItems: showWatched
     ? sourceItems
     : sourceItems.filter(function(item) { return item.watchState !== "watched" })
@@ -49,14 +51,11 @@ Panel {
   }).length
   readonly property string activeViewTitle: activeView === "movies"
     ? "RECENT MOVIES" : (activeView === "series" ? "RECENT SHOWS"
-      : (activeView === "recent" ? "RECENTLY ADDED" : "CONTINUE WATCHING"))
+      : (activeView === "recent" ? "RECENTLY ADDED"
+        : (activeView === "downloads" ? "DOWNLOADS" : "CONTINUE WATCHING")))
   readonly property bool showNewItemCount: setting("showNewItemCount", true) !== false
-  readonly property bool autoPlayNextEpisode:
-    setting("autoPlayNextEpisode", false) === true
-  readonly property string subtitleSearchLanguage: {
-    var value = String(setting("subtitleSearchLanguage", "en") || "").toLowerCase()
-    return /^[a-z]{2}$/.test(value) ? value : "en"
-  }
+  readonly property bool useLocalPlayer: setting("useLocalPlayer", false) === true
+  readonly property bool playInBrowser: !root.useLocalPlayer
   readonly property var barIdentity: hostWidget || root
   readonly property color contentForeground: bar ? bar.foreground : Color.foreground
   readonly property color dimForeground: Qt.darker(contentForeground, 1.55)
@@ -154,8 +153,12 @@ Panel {
   }
 
   function toggleSelectedWatchState() {
-    if (root.visibleItems.length > 0)
-      JellyCore.JellyfinState.toggleWatchState(root.visibleItems[selectedIndex])
+    if (root.visibleItems.length === 0) return
+    if (root.activeView === "downloads") {
+      JellyCore.JellyfinState.removeDownload(root.visibleItems[selectedIndex])
+      return
+    }
+    JellyCore.JellyfinState.toggleWatchState(root.visibleItems[selectedIndex])
   }
 
   function setPlaybackMode(mode) {
@@ -179,26 +182,13 @@ Panel {
     root.persistSettings({ showNewItemCount: value === true })
   }
 
-  function setAutoPlayNextEpisode(value) {
-    root.persistSettings({ autoPlayNextEpisode: value === true })
+  function setUseLocalPlayer(value) {
+    root.persistSettings({ useLocalPlayer: value === true })
   }
 
-  function setSubtitleSearchLanguage(value) {
-    var language = String(value || "").trim().toLowerCase()
-    if (/^[a-z]{2}$/.test(language))
-      root.persistSettings({ subtitleSearchLanguage: language })
-  }
+  onPlayInBrowserChanged: JellyCore.JellyfinState.playInBrowser = root.playInBrowser
 
-  onAutoPlayNextEpisodeChanged:
-    JellyCore.JellyfinState.autoPlayNextEpisode = root.autoPlayNextEpisode
-
-  onSubtitleSearchLanguageChanged:
-    JellyCore.JellyfinState.subtitleSearchLanguage = root.subtitleSearchLanguage
-
-  Component.onCompleted: {
-    JellyCore.JellyfinState.autoPlayNextEpisode = root.autoPlayNextEpisode
-    JellyCore.JellyfinState.subtitleSearchLanguage = root.subtitleSearchLanguage
-  }
+  Component.onCompleted: JellyCore.JellyfinState.playInBrowser = root.playInBrowser
 
   function toggleWatched() {
     showWatched = !showWatched
@@ -206,11 +196,21 @@ Panel {
     keyCatcher.forceActiveFocus()
   }
 
+  function queueOrRemoveDownload() {
+    if (root.visibleItems.length === 0) return
+    var item = root.visibleItems[selectedIndex]
+    if (root.activeView === "downloads")
+      JellyCore.JellyfinState.removeDownload(item)
+    else
+      JellyCore.JellyfinState.queueDownload(item)
+  }
+
   function setView(view) {
-    activeView = ["continue", "recent", "movies", "series"].indexOf(view) === -1 ? "continue" : view
+    activeView = ["continue", "recent", "movies", "series", "downloads"].indexOf(view) === -1 ? "continue" : view
     selectedIndex = 0
     cursorActive = true
     collapseFolders()
+    if (activeView === "downloads") JellyCore.JellyfinState.loadDownloads()
     Qt.callLater(function() {
       if (root.mediaSearchOpen) mediaSearchField.forceActiveFocus()
       else keyCatcher.forceActiveFocus()
@@ -218,7 +218,7 @@ Panel {
   }
 
   function cycleView(delta) {
-    var views = ["continue", "recent", "movies", "series"]
+    var views = ["continue", "recent", "movies", "series", "downloads"]
     var index = views.indexOf(activeView)
     if (index < 0) index = 0
     setView(views[(index + delta + views.length) % views.length])
@@ -228,7 +228,9 @@ Panel {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.summon !== "function") return
     root.controller.hide()
     root.bar.shell.summon(root.moduleName, JSON.stringify({
-      view: root.activeView === "series" ? "series" : "movies"
+      view: root.activeView === "downloads"
+        ? "downloads"
+        : (root.activeView === "series" ? "series" : "movies")
     }))
   }
 
@@ -348,11 +350,16 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: keybindingsOverlay.inputFocused || mediaSearchField.activeFocus
+        || root.settingsOpen
         || settingsOverlay.inputFocused
       onMoveRequested: function(dx, dy) {
-        if (!root.settingsOpen && !root.helpOpen) {
+        if (root.helpOpen) {
+          if (dy !== 0) keybindingsOverlay.moveSelection(dy)
+          return
+        }
+        if (!root.settingsOpen) {
           if (dy !== 0) root.moveSelection(dy)
-          else if (dx !== 0) root.switchPanel(dx)
+          else if (dx !== 0) root.cycleView(dx)
         }
       }
       onActivateRequested: if (!root.settingsOpen && !root.helpOpen) root.playSelection()
@@ -375,6 +382,8 @@ Panel {
         if (root.helpOpen) {
           if (text === "?") root.closeHelp()
           else if (text === "/") keybindingsOverlay.focusSearch()
+          else if (text === "j" || text === "J") keybindingsOverlay.moveSelection(1)
+          else if (text === "k" || text === "K") keybindingsOverlay.moveSelection(-1)
           return
         }
         if (text === "," || text === "<") root.cycleView(-1)
@@ -383,8 +392,10 @@ Panel {
         else if (text === "k" || text === "K") root.moveSelection(-1)
         else if (text === "r" || text === "R") JellyCore.JellyfinState.refresh()
         else if (text === "u" || text === "U") JellyCore.JellyfinState.scanLibraries()
-        else if (text === "w" || text === "W") root.setPlaybackMode("windowed")
-        else if (text === "f" || text === "F") root.setPlaybackMode("fullscreen")
+        else if ((text === "w" || text === "W") && !JellyCore.JellyfinState.playInBrowser)
+          root.setPlaybackMode("windowed")
+        else if ((text === "f" || text === "F") && !JellyCore.JellyfinState.playInBrowser)
+          root.setPlaybackMode("fullscreen")
         else if (text === "[") root.cycleView(-1)
         else if (text === "]") root.cycleView(1)
         else if (text === "t" || text === "T") root.toggleWatched()
@@ -392,6 +403,11 @@ Panel {
         else if (text === "a" || text === "A") root.setView("recent")
         else if (text === "m" || text === "M") root.setView("movies")
         else if (text === "s" || text === "S") root.setView("series")
+        else if (text === "d" || text === "D") {
+          root.setView("downloads")
+          JellyCore.JellyfinState.loadDownloads()
+        }
+        else if (text === "y" || text === "Y") root.queueOrRemoveDownload()
         else if (text === "b" || text === "B") root.summonBrowser()
         else if (text === "p" || text === "P") JellyCore.JellyfinState.openJellyfinWeb()
         else if (text === "?") root.toggleHelp()
@@ -424,29 +440,33 @@ Panel {
 
               PanelActionButton {
                 iconText: "\uEB4C" // cod-screen-full
-                tooltipText: "Fullscreen playback (F)"
+                tooltipText: JellyCore.JellyfinState.playInBrowser
+                  ? "Fullscreen is controlled in the browser"
+                  : "Fullscreen playback (F)"
                 foreground: JellyCore.JellyfinState.playbackMode === "fullscreen" ? Color.accent : root.contentForeground
                 fontFamily: root.contentFontFamily
                 bordered: JellyCore.JellyfinState.playbackMode === "fullscreen"
-                enabled: !JellyCore.JellyfinState.playing
+                enabled: !JellyCore.JellyfinState.playing && !JellyCore.JellyfinState.playInBrowser
                 onClicked: root.setPlaybackMode("fullscreen")
               }
 
               PanelActionButton {
                 iconText: "\uEB4D" // cod-screen-normal
-                tooltipText: "Windowed playback (W)"
+                tooltipText: JellyCore.JellyfinState.playInBrowser
+                  ? "Windowed size is controlled in the browser"
+                  : "Windowed playback (W)"
                 foreground: JellyCore.JellyfinState.playbackMode === "windowed" ? Color.accent : root.contentForeground
                 fontFamily: root.contentFontFamily
                 bordered: JellyCore.JellyfinState.playbackMode === "windowed"
-                enabled: !JellyCore.JellyfinState.playing
+                enabled: !JellyCore.JellyfinState.playing && !JellyCore.JellyfinState.playInBrowser
                 onClicked: root.setPlaybackMode("windowed")
               }
 
               PanelActionButton {
                 iconText: "\uEB14" // cod-link-external
                 tooltipText: JellyCore.JellyfinState.playingWindowed
-                  ? "Bring player to this workspace"
-                  : "No windowed player is active"
+                  ? "Bring the player to this workspace"
+                  : "No player window is open"
                 foreground: root.contentForeground
                 fontFamily: root.contentFontFamily
                 enabled: JellyCore.JellyfinState.playingWindowed
@@ -533,6 +553,20 @@ Panel {
             onClicked: root.setView("series")
           }
 
+          Button {
+            text: JellyCore.JellyfinState.downloadItems.length > 0
+              ? "Saved " + JellyCore.JellyfinState.downloadItems.length : "Saved"
+            fontSize: Style.font.caption
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            bordered: true
+            active: root.activeView === "downloads" || JellyCore.JellyfinState.syncingDownloads
+            onClicked: {
+              root.setView("downloads")
+              JellyCore.JellyfinState.loadDownloads()
+            }
+          }
+
           Item {
             width: Style.space(5)
             height: 1
@@ -574,11 +608,15 @@ Panel {
         }
 
         Text {
-          visible: JellyCore.JellyfinState.markMessage !== "" || JellyCore.JellyfinState.scanMessage !== ""
+          visible: JellyCore.JellyfinState.markMessage !== ""
+            || JellyCore.JellyfinState.scanMessage !== ""
+            || JellyCore.JellyfinState.downloadMessage !== ""
           width: parent.width
           text: JellyCore.JellyfinState.safeText(
-            JellyCore.JellyfinState.markMessage !== ""
-              ? JellyCore.JellyfinState.markMessage : JellyCore.JellyfinState.scanMessage,
+            JellyCore.JellyfinState.downloadMessage !== ""
+              ? JellyCore.JellyfinState.downloadMessage
+              : (JellyCore.JellyfinState.markMessage !== ""
+                ? JellyCore.JellyfinState.markMessage : JellyCore.JellyfinState.scanMessage),
             120
           )
           textFormat: Text.PlainText
@@ -590,9 +628,14 @@ Panel {
 
         Text {
           visible: JellyCore.JellyfinState.playing
+            || (JellyCore.JellyfinState.playingWindowed
+              && JellyCore.JellyfinState.playingTitle !== "")
           width: parent.width
-          text: "Playing " + JellyCore.JellyfinState.safeText(JellyCore.JellyfinState.playingTitle, 160)
-            + " in " + JellyCore.JellyfinState.playbackMode + " mode"
+          text: JellyCore.JellyfinState.playInBrowser
+            ? "Opened " + JellyCore.JellyfinState.safeText(JellyCore.JellyfinState.playingTitle, 160)
+              + " in Jellyfin Web"
+            : "Playing " + JellyCore.JellyfinState.safeText(JellyCore.JellyfinState.playingTitle, 160)
+              + " in " + JellyCore.JellyfinState.playbackMode + " mode"
           textFormat: Text.PlainText
           color: Color.accent
           font.family: root.contentFontFamily
@@ -715,12 +758,16 @@ Panel {
           visible: JellyCore.JellyfinState.initialized && JellyCore.JellyfinState.configured
             && root.sourceItems.length === 0
           width: parent.width
-          height: Style.space(56)
-          text: JellyCore.JellyfinState.updating ? "Checking Jellyfin…" : "No items in this view"
+          height: root.activeView === "downloads" ? implicitHeight : Style.space(56)
+          text: JellyCore.JellyfinState.updating ? "Checking Jellyfin…"
+              : (root.activeView === "downloads"
+                ? "Press Y on a title to save it."
+              : "No items in this view")
           textFormat: Text.PlainText
           color: root.dimForeground
           font.family: root.contentFontFamily
-          font.pixelSize: Style.font.body
+          font.pixelSize: root.activeView === "downloads" ? Style.font.bodySmall : Style.font.body
+          wrapMode: Text.WordWrap
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
         }
@@ -756,7 +803,11 @@ Panel {
             root.activateItem(item)
           }
           onToggleWatchRequested: function(item) {
+            if (root.activeView === "downloads") return
             JellyCore.JellyfinState.toggleWatchState(item)
+          }
+          onRemoveRequested: function(item) {
+            JellyCore.JellyfinState.removeDownload(item)
           }
         }
 
@@ -770,7 +821,9 @@ Panel {
             anchors.right: settingsButton.left
             anchors.rightMargin: Style.space(6)
             anchors.verticalCenter: parent.verticalCenter
-            text: ", . views · / find · J/K move · ↵ open · X toggle · B browse · ? keys"
+            text: root.activeView === "downloads"
+              ? "Y/X remove · ↵ play · J/K move · ? keys"
+              : "←/→ views · / find · J/K move · ↵ open · X toggle · B browse · ? keys"
             textFormat: Text.PlainText
             color: root.dimForeground
             font.family: root.contentFontFamily
@@ -784,7 +837,7 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             iconText: "󰒓"
-            tooltipText: "Connection settings"
+            tooltipText: "Settings"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             enabled: !JellyCore.JellyfinState.settingsBusy
@@ -815,17 +868,12 @@ Panel {
         fontFamily: root.contentFontFamily
         iconComponent: jellyfinIcon
         showNewItemCount: root.showNewItemCount
-        autoPlayNextEpisode: root.autoPlayNextEpisode
-        subtitleSearchLanguage: root.subtitleSearchLanguage
+        useLocalPlayer: root.useLocalPlayer
         onShowNewItemCountRequested: function(value) { root.setShowNewItemCount(value) }
-        onAutoPlayNextEpisodeRequested: function(value) {
-          root.setAutoPlayNextEpisode(value)
-        }
-        onSubtitleSearchLanguageRequested: function(value) {
-          root.setSubtitleSearchLanguage(value)
-        }
+        onPlayInBrowserRequested: function(value) { root.setUseLocalPlayer(value) }
         onDismissRequested: root.close()
       }
+
     }
   }
 }

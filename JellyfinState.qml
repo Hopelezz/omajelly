@@ -23,8 +23,6 @@ Item {
   property string lastError: ""
   property string playbackMode: "windowed"
   property string playingTitle: ""
-  property bool autoPlayNextEpisode: false
-  property string subtitleSearchLanguage: "en"
   property string connectionServer: ""
   property string connectionName: ""
   property string authenticationMode: ""
@@ -49,6 +47,15 @@ Item {
   property string _windowError: ""
   property string _windowStatusOutput: ""
   property bool playerWindowActive: false
+  property bool playInBrowser: true
+  property var downloadItems: []
+  property int downloadUsedBytes: 0
+  property int downloadMaxBytes: 0
+  property string _downloadOutput: ""
+  property string _downloadError: ""
+  property string _downloadNoticeKey: ""
+  property bool _downloadWasPresent: false
+  property string downloadMessage: ""
   property string _setupOutput: ""
   property string _setupError: ""
   property string _setupPayload: ""
@@ -77,6 +84,10 @@ Item {
     || authStartProcess.running || authPollProcess.running || authCancelProcess.running
   readonly property bool settingsBusy: configuring || clearingConfiguration
     || authStartProcess.running || authPollProcess.running || authCancelProcess.running
+  readonly property bool syncingDownloads: downloadSyncProcess.running
+  readonly property bool settingDownloadLimit: downloadLimitProcess.running
+  readonly property bool queuingDownload: downloadAddProcess.running
+  readonly property bool removingDownload: downloadRemoveProcess.running
   readonly property bool marking: markProcess.running
   readonly property bool updating: refreshProcess.running || scanning || marking || settingsBusy
   readonly property bool playing: playbackProcess.running
@@ -149,6 +160,7 @@ Item {
     lastSuccessAt = document.lastSuccessAt
     lastError = document.error
     initialized = true
+    Qt.callLater(root.loadDownloads)
   }
 
   function loadStatus() {
@@ -299,11 +311,126 @@ Item {
     }
     playbackMode = requestedMode
     playingTitle = safeText(item.title, 256)
+    playerWindowActive = true
     _playError = ""
-    playbackProcess.command = [helperCommand, "play", "--rating-key", ratingKey, "--mode", requestedMode]
-    if (autoPlayNextEpisode) playbackProcess.command.push("--auto-play-next")
-    playbackProcess.command.push("--subtitle-language", subtitleSearchLanguage)
+    playbackProcess.command = [
+      helperCommand, "play",
+      "--rating-key", ratingKey,
+      "--mode", requestedMode,
+      "--backend", root.playInBrowser ? "web" : "mpv"
+    ]
     playbackProcess.running = true
+    return true
+  }
+
+  function applyDownloadDocument(raw) {
+    var document = JSON.parse(String(raw || ""))
+    if (!document || document.schemaVersion !== 1) return
+    var rows = document.items
+    if (!(rows instanceof Array)) rows = []
+    var items = []
+    for (var index = 0; index < rows.length && index < 40; index++) {
+      var item = Model.normalizeItem(rows[index])
+      if (item) {
+        item.downloadState = String(rows[index].downloadState || "")
+        items.push(item)
+      }
+    }
+    root.downloadItems = items
+    root.downloadUsedBytes = Math.max(0, Number(document.usedBytes) || 0)
+    root.downloadMaxBytes = Math.max(0, Number(document.maxBytes) || 0)
+  }
+
+  function downloadStateFor(item) {
+    var key = String(item && (item.playbackRatingKey || item.ratingKey) || "")
+    if (!/^[0-9a-fA-F-]{8,48}$/.test(key)) return ""
+    var rows = root.downloadItems
+    for (var index = 0; index < rows.length; index++) {
+      if (String(rows[index].ratingKey || "") === key
+          || String(rows[index].playbackRatingKey || "") === key)
+        return String(rows[index].downloadState || "queued")
+    }
+    return ""
+  }
+
+  function setDownloadMessage(text) {
+    downloadMessage = safeText(text, 120)
+    downloadMessageTimer.restart()
+  }
+
+  function loadDownloads() {
+    if (!installed || downloadListProcess.running) return false
+    _downloadOutput = ""
+    _downloadError = ""
+    downloadListProcess.command = [
+      "timeout", "--signal=TERM", "8", helperCommand, "download-list"
+    ]
+    downloadListProcess.running = true
+    return true
+  }
+
+  function queueDownload(item) {
+    if (!item || item.playable === false || downloadAddProcess.running || !configured)
+      return false
+    var ratingKey = String(item.playbackRatingKey || item.ratingKey || "")
+    if (!/^[0-9a-fA-F-]{8,48}$/.test(ratingKey)) {
+      lastError = "This Jellyfin item has an invalid item id"
+      return false
+    }
+    _downloadOutput = ""
+    _downloadError = ""
+    lastError = ""
+    _downloadNoticeKey = ratingKey
+    _downloadWasPresent = false
+    for (var index = 0; index < root.downloadItems.length; index++) {
+      if (String(root.downloadItems[index].ratingKey || "") === ratingKey
+          || String(root.downloadItems[index].playbackRatingKey || "") === ratingKey)
+        _downloadWasPresent = true
+    }
+    root.setDownloadMessage(_downloadWasPresent ? "Already on the download list" : "Queuing…")
+    downloadAddProcess.command = [
+      "timeout", "--signal=TERM", "20", helperCommand, "download-add",
+      "--rating-key", ratingKey
+    ]
+    downloadAddProcess.running = true
+    return true
+  }
+
+  function removeDownload(item) {
+    if (!item || downloadRemoveProcess.running) return false
+    var ratingKey = String(item.ratingKey || "")
+    if (!/^[0-9a-fA-F-]{8,48}$/.test(ratingKey)) return false
+    _downloadOutput = ""
+    _downloadError = ""
+    lastError = ""
+    _downloadNoticeKey = ratingKey
+    downloadRemoveProcess.command = [
+      "timeout", "--signal=TERM", "12", helperCommand, "download-remove",
+      "--rating-key", ratingKey
+    ]
+    downloadRemoveProcess.running = true
+    return true
+  }
+
+  function startDownloadSync() {
+    if (!installed || !configured || downloadSyncProcess.running) return false
+    downloadSyncProcess.command = [helperCommand, "download-sync"]
+    downloadSyncProcess.running = true
+    return true
+  }
+
+  function setDownloadLimit(gibibytes) {
+    var gib = Math.round(Number(gibibytes))
+    if ([5, 10, 20, 40].indexOf(gib) === -1 || !installed || downloadLimitProcess.running)
+      return false
+    _downloadOutput = ""
+    _downloadError = ""
+    lastError = ""
+    downloadLimitProcess.command = [
+      "timeout", "--signal=TERM", "8", helperCommand, "download-limit",
+      "--gib", String(gib)
+    ]
+    downloadLimitProcess.running = true
     return true
   }
 
@@ -502,6 +629,12 @@ Item {
     id: scanMessageTimer
     interval: 8 * 1000
     onTriggered: root.scanMessage = ""
+  }
+
+  Timer {
+    id: downloadMessageTimer
+    interval: 5 * 1000
+    onTriggered: root.downloadMessage = ""
   }
 
   Timer {
@@ -882,7 +1015,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0)
         root.lastError = root.safeText(root._playError || playStderr.text || "Playback failed", 220)
-      root.playingTitle = ""
+      Qt.callLater(root.checkPlayerWindow)
       Qt.callLater(root.refresh)
     }
   }
@@ -918,6 +1051,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.playerWindowActive = false
+        root.playingTitle = ""
         return
       }
       try {
@@ -928,6 +1062,7 @@ Item {
       } catch (error) {
         root.playerWindowActive = false
       }
+      if (!root.playerWindowActive) root.playingTitle = ""
     }
   }
 
@@ -941,6 +1076,156 @@ Item {
     }
     onExited: function(exitCode) {
       if (exitCode !== 0) root.lastError = root.safeText(webStderr.text || "Could not open Jellyfin Web", 220)
+    }
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.syncingDownloads
+    onTriggered: root.loadDownloads()
+  }
+
+  Process {
+    id: downloadListProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: downloadListStdout
+      waitForEnd: true
+      onStreamFinished: root._downloadOutput = text
+    }
+    stderr: StdioCollector {
+      id: downloadListStderr
+      waitForEnd: true
+      onStreamFinished: root._downloadError = text
+    }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        try {
+          if (exitCode !== 0)
+            throw new Error(root._downloadError || downloadListStderr.text || "Could not read downloads")
+          root.applyDownloadDocument(root._downloadOutput || downloadListStdout.text)
+        } catch (error) {
+          root.lastError = root.safeText(error, 220)
+        }
+      })
+    }
+  }
+
+  Process {
+    id: downloadAddProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: downloadAddStdout
+      waitForEnd: true
+      onStreamFinished: root._downloadOutput = text
+    }
+    stderr: StdioCollector {
+      id: downloadAddStderr
+      waitForEnd: true
+      onStreamFinished: root._downloadError = text
+    }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        try {
+          if (exitCode !== 0)
+            throw new Error(root._downloadError || downloadAddStderr.text || "Could not add download")
+          root.applyDownloadDocument(root._downloadOutput || downloadAddStdout.text)
+          root.setDownloadMessage(
+            root._downloadWasPresent ? "Already on the download list" : "Queued for download"
+          )
+          root.startDownloadSync()
+        } catch (error) {
+          root.downloadMessage = ""
+          root.lastError = root.safeText(error, 220)
+        }
+      })
+    }
+  }
+
+  Process {
+    id: downloadRemoveProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: downloadRemoveStdout
+      waitForEnd: true
+      onStreamFinished: root._downloadOutput = text
+    }
+    stderr: StdioCollector {
+      id: downloadRemoveStderr
+      waitForEnd: true
+      onStreamFinished: root._downloadError = text
+    }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        try {
+          if (exitCode !== 0)
+            throw new Error(root._downloadError || downloadRemoveStderr.text || "Could not remove download")
+          root.applyDownloadDocument(root._downloadOutput || downloadRemoveStdout.text)
+          root.setDownloadMessage("Removed from downloads")
+        } catch (error) {
+          root.lastError = root.safeText(error, 220)
+        }
+      })
+    }
+  }
+
+  Process {
+    id: downloadSyncProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: downloadSyncStdout
+      waitForEnd: true
+      onStreamFinished: root._downloadOutput = text
+    }
+    stderr: StdioCollector {
+      id: downloadSyncStderr
+      waitForEnd: true
+      onStreamFinished: root._downloadError = text
+    }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        try {
+          if (exitCode === 0)
+            root.applyDownloadDocument(root._downloadOutput || downloadSyncStdout.text)
+          else if (root._downloadError || downloadSyncStderr.text)
+            root.lastError = root.safeText(root._downloadError || downloadSyncStderr.text, 220)
+        } catch (error) {
+          root.lastError = root.safeText(error, 220)
+        }
+        root.loadDownloads()
+      })
+    }
+  }
+
+  Process {
+    id: downloadLimitProcess
+    running: false
+    command: []
+    stdout: StdioCollector {
+      id: downloadLimitStdout
+      waitForEnd: true
+      onStreamFinished: root._downloadOutput = text
+    }
+    stderr: StdioCollector {
+      id: downloadLimitStderr
+      waitForEnd: true
+      onStreamFinished: root._downloadError = text
+    }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        try {
+          if (exitCode !== 0)
+            throw new Error(root._downloadError || downloadLimitStderr.text || "Could not set the download limit")
+          root.applyDownloadDocument(root._downloadOutput || downloadLimitStdout.text)
+        } catch (error) {
+          root.lastError = root.safeText(error, 220)
+        }
+      })
     }
   }
 }

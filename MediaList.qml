@@ -18,6 +18,7 @@ ListView {
   signal focusRequested(int index)
   signal playRequested(var item)
   signal toggleWatchRequested(var item)
+  signal removeRequested(var item)
 
   visible: items.length > 0
   clip: true
@@ -40,6 +41,7 @@ ListView {
     hasCursor: root.cursorActive && root.selectedIndex === index
 
     MouseArea {
+      id: rowMouse
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
@@ -72,25 +74,33 @@ ListView {
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(1)
 
-      Text {
+      MarqueeLabel {
         width: parent.width
         text: Model.plainText(mediaRow.modelData.title, 256)
-        textFormat: Text.PlainText
         color: mediaRow.modelData.watchState === "watched"
           ? root.dimForeground : root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: mediaRow.modelData.watchState !== "watched"
-        elide: Text.ElideRight
+        fontFamily: root.fontFamily
+        fontPixelSize: Style.font.body
+        fontBold: mediaRow.modelData.watchState !== "watched"
+        scrolling: mediaRow.hasCursor || rowMouse.containsMouse
       }
 
       Text {
         width: parent.width
-        text: Model.plainText(mediaRow.modelData.subtitle, 256)
-          + (mediaRow.modelData.addedLabel === ""
-            ? "" : " · " + Model.plainText(mediaRow.modelData.addedLabel, 80))
-          + (mediaRow.modelData.playbackHint === ""
-            ? "" : " · " + Model.plainText(mediaRow.modelData.playbackHint, 80))
+        text: {
+          var parts = [Model.plainText(mediaRow.modelData.subtitle, 256)]
+          if (mediaRow.modelData.downloadState) {
+            if (mediaRow.modelData.playbackHint !== "")
+              parts.push(Model.plainText(mediaRow.modelData.playbackHint, 80))
+          } else {
+            if (mediaRow.modelData.addedLabel !== "")
+              parts.push(Model.plainText(mediaRow.modelData.addedLabel, 80))
+            if (mediaRow.modelData.playbackHint !== ""
+                && mediaRow.modelData.playbackHint !== mediaRow.modelData.addedLabel)
+              parts.push(Model.plainText(mediaRow.modelData.playbackHint, 80))
+          }
+          return parts.filter(function(part) { return part !== "" }).join(" · ")
+        }
         textFormat: Text.PlainText
         color: root.dimForeground
         font.family: root.fontFamily
@@ -105,26 +115,38 @@ ListView {
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       z: 1
-      text: mediaRow.modelData.playable === false
-        ? (mediaRow.modelData.kind === "season" || mediaRow.modelData.kind === "show"
-          ? "OPEN" : Model.watchLabel(mediaRow.modelData.watchState))
-        : Model.watchLabel(mediaRow.modelData.watchState)
-      tooltipText: mediaRow.modelData.playable === false
-        ? "Open folder"
-        : (mediaRow.modelData.watchState === "watched" ? "Mark unwatched" : "Mark watched")
+      text: mediaRow.modelData.downloadState
+        ? "REMOVE"
+        : (mediaRow.modelData.playable === false
+          ? (mediaRow.modelData.kind === "season" || mediaRow.modelData.kind === "show"
+            ? "OPEN" : Model.watchLabel(mediaRow.modelData.watchState))
+          : Model.watchLabel(mediaRow.modelData.watchState))
+      tooltipText: mediaRow.modelData.downloadState
+        ? "Remove from the download list"
+        : (mediaRow.modelData.playable === false
+          ? "Open folder"
+          : (mediaRow.modelData.watchState === "watched" ? "Mark unwatched" : "Mark watched"))
       fontSize: Style.font.caption
       foreground: mediaRow.modelData.isNew ? Color.accent : root.dimForeground
       fontFamily: root.fontFamily
       horizontalPadding: Style.space(6)
       verticalPadding: Style.space(2)
       bordered: true
-      active: JellyCore.JellyfinState.markingRatingKey === String(mediaRow.modelData.ratingKey)
-      enabled: mediaRow.modelData.playable === false || !JellyCore.JellyfinState.updating
+      active: mediaRow.modelData.downloadState
+        ? JellyCore.JellyfinState.removingDownload
+        : JellyCore.JellyfinState.markingRatingKey === String(mediaRow.modelData.ratingKey)
+      enabled: mediaRow.modelData.downloadState
+        ? !JellyCore.JellyfinState.removingDownload
+        : (mediaRow.modelData.playable === false || !JellyCore.JellyfinState.updating)
       onHovered: function(isHovered) {
         if (isHovered) root.focusRequested(mediaRow.index)
       }
       onClicked: {
         root.focusRequested(mediaRow.index)
+        if (mediaRow.modelData.downloadState) {
+          root.removeRequested(mediaRow.modelData)
+          return
+        }
         if (mediaRow.modelData.playable === false) {
           root.playRequested(mediaRow.modelData)
           return
