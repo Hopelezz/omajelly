@@ -31,12 +31,17 @@ _OMARCHY_BIN = Path("/usr/share/omarchy/bin")
 _URL_IN_EXEC = re.compile(r"https?://[^\s\"']+")
 _JELLYFIN_BROWSER_FLAGS = (
     "--new-window",
-    "--disable-gpu",
-    "--disable-gpu-compositing",
-    "--ozone-platform=x11",
+    "--autoplay-policy=no-user-gesture-required",
+    "--ozone-platform=wayland",
+    "--ozone-platform-hint=wayland",
+    "--disable-accelerated-video-decode",
+    "--disable-features=VaapiVideoDecoder,VaapiVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL",
 )
 _AUTOPLAY_SCRIPT = (
     Path(__file__).resolve().parents[1] / "assets" / "jellyfin-web-autoplay" / "autoplay.js"
+)
+_OPAQUE_STYLE = (
+    Path(__file__).resolve().parents[1] / "assets" / "jellyfin-web-autoplay" / "opaque.css"
 )
 
 
@@ -124,7 +129,7 @@ def _needs_webapp_install(found: dict[str, str] | None) -> bool:
 
 
 def prepare_autoplay_extension(url: str) -> Path | None:
-    if not _AUTOPLAY_SCRIPT.is_file():
+    if not _AUTOPLAY_SCRIPT.is_file() or not _OPAQUE_STYLE.is_file():
         return None
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -132,6 +137,7 @@ def prepare_autoplay_extension(url: str) -> Path | None:
     directory = config_home() / "web-autoplay"
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     shutil.copyfile(_AUTOPLAY_SCRIPT, directory / "autoplay.js")
+    shutil.copyfile(_OPAQUE_STYLE, directory / "opaque.css")
     atomic_json_write(
         directory / "manifest.json",
         {
@@ -141,8 +147,9 @@ def prepare_autoplay_extension(url: str) -> Path | None:
             "content_scripts": [
                 {
                     "matches": [parsed.scheme + "://" + parsed.netloc + "/*"],
+                    "css": ["opaque.css"],
                     "js": ["autoplay.js"],
-                    "run_at": "document_idle",
+                    "run_at": "document_start",
                 }
             ],
         },

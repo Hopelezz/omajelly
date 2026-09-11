@@ -1,0 +1,29 @@
+html,
+html.transparentDocument,
+body,
+#reactRoot,
+.backgroundContainer,
+.backgroundContainer-transparent {
+    background: #000 !important;
+    background-color: #000 !important;
+}
+
+.videoPlayerContainer {
+    background: #000 !important;
+}
+
+#videoOsdPage,
+.page,
+.libraryPage {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+.videoPlayerContainer video.htmlvideoplayer,
+.videoPlayerContainer video {
+    opacity: 1 !important;
+    visibility: visible !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+}

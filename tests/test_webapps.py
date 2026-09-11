@@ -190,9 +190,11 @@ class WebappTests(unittest.TestCase):
                 "omarchy-launch-webapp",
                 "http://jellyfin:8096/web/#/details?id=12345678",
                 "--new-window",
-                "--disable-gpu",
-                "--disable-gpu-compositing",
-                "--ozone-platform=x11",
+                "--autoplay-policy=no-user-gesture-required",
+                "--ozone-platform=wayland",
+                "--ozone-platform-hint=wayland",
+                "--disable-accelerated-video-decode",
+                "--disable-features=VaapiVideoDecoder,VaapiVideoEncoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL",
             ],
             env=mock.ANY,
         )
@@ -212,8 +214,12 @@ class WebappTests(unittest.TestCase):
                 )
                 matches = manifest["content_scripts"][0]["matches"]
                 self.assertEqual(matches, ["http://jellyfin:8096/*"])
+                self.assertEqual(
+                    manifest["content_scripts"][0]["css"], ["opaque.css"]
+                )
                 self.assertNotIn(TOKEN, json.dumps(manifest))
                 self.assertTrue((extension / "autoplay.js").is_file())
+                self.assertTrue((extension / "opaque.css").is_file())
 
     def test_install_refuses_a_name_that_is_not_jellyfin(self):
         with self.assertRaises(ConfigurationError):
